@@ -419,22 +419,44 @@ async function handleEloThresholdModal(interaction) {
       throw new Error('Invalid ELO threshold');
     }
 
-    // Delete images below threshold
-    const result = await database.query(
-      `DELETE FROM images WHERE guild_id = $1 AND elo < $2 AND retired = false RETURNING id`,
+    // Instead of deleting, we'll retire images and optionally clean up old references
+    // First, get IDs of images to retire
+    const imagesToRetire = await database.query(
+      `SELECT id FROM images WHERE guild_id = $1 AND elo < $2 AND retired = false`,
       [interaction.guild.id, threshold]
     );
 
-    const count = result.rows.length;
+    if (imagesToRetire.rows.length === 0) {
+      const infoEmbed = embedUtils.createSuccessEmbed(`No images found with ELO below ${threshold}.`);
+      await interaction.followUp({ embeds: [infoEmbed], flags: MessageFlags.Ephemeral });
+      
+      const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+      await adminConfig.handleImageManagement(interaction, config);
+      return;
+    }
 
-    const successEmbed = embedUtils.createSuccessEmbed(`Deleted ${count} image(s) with ELO below ${threshold}!`);
+    const imageIds = imagesToRetire.rows.map(row => row.id);
+
+    // Retire the images instead of deleting them
+    await database.query(
+      `UPDATE images SET retired = true, retired_at = NOW() 
+       WHERE guild_id = $1 AND elo < $2 AND retired = false`,
+      [interaction.guild.id, threshold]
+    );
+
+    const count = imagesToRetire.rows.length;
+
+    const successEmbed = embedUtils.createSuccessEmbed(
+      `Retired ${count} image(s) with ELO below ${threshold}!\n\n` +
+      `Note: Images are retired (not deleted) to preserve duel history. ♡`
+    );
     await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.handleImageManagement(interaction, config);
   } catch (error) {
     console.error('Error clearing images:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to clear images.');
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to retire images. Error: ' + error.message);
     await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
