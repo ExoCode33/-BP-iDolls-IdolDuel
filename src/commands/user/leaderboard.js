@@ -1,21 +1,10 @@
-import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import database from '../../database/database.js';
 import storage from '../../services/storage.js';
 import embedUtils from '../../utils/embeds.js';
 
 export default {
-  data: new SlashCommandBuilder()
-    .setName('idolduel')
-    .setDescription('IdolDuel commands')
-    .addSubcommand(subcommand =>
-      subcommand
-        .setName('leaderboard')
-        .setDescription('View the top users and images')
-    ),
-
   async execute(interaction) {
-    if (interaction.options.getSubcommand() !== 'leaderboard') return;
-
     await interaction.deferReply();
 
     try {
