@@ -97,6 +97,11 @@ export default {
               description: 'Reset season and manage archives',
               value: 'season_management',
             },
+            {
+              label: '⚠️ System Reset',
+              description: 'Complete system wipe and restart (requires password)',
+              value: 'system_reset',
+            },
           ])
       );
 
@@ -363,6 +368,11 @@ export default {
       );
 
     await interaction.editReply({ embeds: [embed], components: [buttons, backButton] });
+  },
+
+  async handleSystemReset(interaction, config) {
+    const systemReset = await import('./systemReset.js');
+    await systemReset.default.showResetWarning(interaction);
   },
 
   // Modal creators
