@@ -156,6 +156,20 @@ export async function handleButtonInteraction(interaction) {
     await interaction.showModal(adminConfig.createSeasonResetModal());
     return;
   }
+
+  // System reset buttons
+  if (customId === 'confirm_system_reset') {
+    const systemReset = await import('../commands/admin/systemReset.js');
+    await systemReset.default.showPasswordModal(interaction);
+    return;
+  }
+
+  if (customId === 'cancel_system_reset') {
+    await interaction.deferUpdate();
+    const embed = embedUtils.createSuccessEmbed('System reset cancelled.');
+    await interaction.editReply({ embeds: [embed], components: [] });
+    return;
+  }
 }
 
 async function handleVoteButton(interaction) {
