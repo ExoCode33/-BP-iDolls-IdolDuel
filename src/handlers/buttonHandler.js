@@ -367,6 +367,8 @@ async function handleListImagesButton(interaction) {
       `**Win Rate:** ${winRate}%\n` +
       `**Uploader:** <@${image.uploader_id}>`
     );
+    // Set both thumbnail AND image for better display
+    embed.setThumbnail(imageUrl);
     embed.setImage(imageUrl);
     embed.setFooter({ text: `Image ${currentIndex + 1} of ${images.length} | Navigate with buttons ♡` });
 
@@ -444,6 +446,8 @@ async function handleImageListNavigation(interaction, direction) {
       `**Win Rate:** ${winRate}%\n` +
       `**Uploader:** <@${image.uploader_id}>`
     );
+    // Set both thumbnail AND image for better display
+    embed.setThumbnail(imageUrl);
     embed.setImage(imageUrl);
     embed.setFooter({ text: `Image ${currentIndex + 1} of ${images.length} | Navigate with buttons ♡` });
 
