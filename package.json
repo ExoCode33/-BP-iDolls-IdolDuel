@@ -1,0 +1,24 @@
+{
+  "name": "idolduel-bot",
+  "version": "1.0.0",
+  "description": "A Discord bot for image duels with ELO ranking system",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy": "node src/deploy-commands.js"
+  },
+  "keywords": ["discord", "bot", "elo", "duels", "images"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "pg": "^8.11.3",
+    "redis": "^4.6.12",
+    "@aws-sdk/client-s3": "^3.490.0",
+    "@aws-sdk/lib-storage": "^3.490.0",
+    "dotenv": "^16.3.1",
+    "crypto": "^1.0.1"
+  }
+}
