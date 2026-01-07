@@ -1,190 +1,351 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+import duelManager from '../services/duelManager.js';
+import database from '../database/database.js';
+import embedUtils from '../utils/embeds.js';
+import adminConfig from '../commands/admin/config.js';
+import leaderboardCmd from '../commands/user/leaderboard.js';
 
-class Database {
-  constructor() {
-    this.pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-    });
+export async function handleButtonInteraction(interaction) {
+  const customId = interaction.customId;
+
+  // Duel voting buttons
+  if (customId.startsWith('vote_image_')) {
+    await handleVoteButton(interaction);
+    return;
   }
 
-  async initialize() {
-    try {
-      await this.createTables();
-      console.log('✅ Database initialized successfully');
-    } catch (error) {
-      console.error('❌ Database initialization failed:', error);
-      throw error;
-    }
+  // Caption button
+  if (customId === 'add_caption') {
+    await handleCaptionButton(interaction);
+    return;
   }
 
-  async createTables() {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Guild Configuration Table
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS guild_config (
-          guild_id VARCHAR(20) PRIMARY KEY,
-          duel_channel_id VARCHAR(20),
-          import_channel_ids TEXT[],
-          duel_duration INTEGER DEFAULT 1800,
-          duel_interval INTEGER DEFAULT 1800,
-          starting_elo INTEGER DEFAULT 1000,
-          k_factor INTEGER DEFAULT 30,
-          streak_bonus_2 DECIMAL DEFAULT 0.05,
-          streak_bonus_3 DECIMAL DEFAULT 0.10,
-          upset_bonus DECIMAL DEFAULT 0.15,
-          wildcard_chance DECIMAL DEFAULT 0.05,
-          min_votes INTEGER DEFAULT 1,
-          losses_before_retirement INTEGER DEFAULT 3,
-          max_active_images INTEGER DEFAULT 500,
-          elo_clear_threshold INTEGER,
-          duel_active BOOLEAN DEFAULT false,
-          duel_paused BOOLEAN DEFAULT false,
-          last_duel_time BIGINT,
-          season_number INTEGER DEFAULT 1,
-          created_at TIMESTAMP DEFAULT NOW(),
-          updated_at TIMESTAMP DEFAULT NOW()
-        )
-      `);
-
-      // Images Table
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS images (
-          id SERIAL PRIMARY KEY,
-          guild_id VARCHAR(20) NOT NULL,
-          image_hash VARCHAR(64) UNIQUE NOT NULL,
-          s3_key VARCHAR(255) NOT NULL,
-          discord_message_id VARCHAR(20),
-          discord_channel_id VARCHAR(20),
-          uploader_id VARCHAR(20) NOT NULL,
-          elo INTEGER DEFAULT 1000,
-          wins INTEGER DEFAULT 0,
-          losses INTEGER DEFAULT 0,
-          current_streak INTEGER DEFAULT 0,
-          best_streak INTEGER DEFAULT 0,
-          total_votes_received INTEGER DEFAULT 0,
-          retired BOOLEAN DEFAULT false,
-          retired_at TIMESTAMP,
-          imported_at TIMESTAMP DEFAULT NOW(),
-          last_duel_at TIMESTAMP,
-          UNIQUE(guild_id, image_hash)
-        )
-      `);
-
-      // Users Table (for ELO tracking)
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS users (
-          id SERIAL PRIMARY KEY,
-          guild_id VARCHAR(20) NOT NULL,
-          user_id VARCHAR(20) NOT NULL,
-          elo INTEGER DEFAULT 1000,
-          total_votes_cast INTEGER DEFAULT 0,
-          current_streak INTEGER DEFAULT 0,
-          best_streak INTEGER DEFAULT 0,
-          created_at TIMESTAMP DEFAULT NOW(),
-          UNIQUE(guild_id, user_id)
-        )
-      `);
-
-      // Captions Table
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS captions (
-          id SERIAL PRIMARY KEY,
-          image_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
-          user_id VARCHAR(20) NOT NULL,
-          caption TEXT NOT NULL,
-          created_at TIMESTAMP DEFAULT NOW(),
-          UNIQUE(image_id, user_id)
-        )
-      `);
-
-      // Duels Table (history)
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS duels (
-          id SERIAL PRIMARY KEY,
-          guild_id VARCHAR(20) NOT NULL,
-          image1_id INTEGER REFERENCES images(id),
-          image2_id INTEGER REFERENCES images(id),
-          winner_id INTEGER REFERENCES images(id),
-          image1_votes INTEGER DEFAULT 0,
-          image2_votes INTEGER DEFAULT 0,
-          is_wildcard BOOLEAN DEFAULT false,
-          elo_change INTEGER,
-          started_at TIMESTAMP DEFAULT NOW(),
-          ended_at TIMESTAMP
-        )
-      `);
-
-      // Active Duel Table (current duel state)
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS active_duels (
-          guild_id VARCHAR(20) PRIMARY KEY,
-          duel_id INTEGER REFERENCES duels(id),
-          image1_id INTEGER REFERENCES images(id),
-          image2_id INTEGER REFERENCES images(id),
-          message_id VARCHAR(20),
-          started_at TIMESTAMP DEFAULT NOW(),
-          ends_at TIMESTAMP NOT NULL
-        )
-      `);
-
-      // Votes Table (for tracking who voted)
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS votes (
-          id SERIAL PRIMARY KEY,
-          duel_id INTEGER REFERENCES duels(id) ON DELETE CASCADE,
-          user_id VARCHAR(20) NOT NULL,
-          image_id INTEGER REFERENCES images(id),
-          voted_at TIMESTAMP DEFAULT NOW(),
-          UNIQUE(duel_id, user_id)
-        )
-      `);
-
-      // Logs Table
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS logs (
-          id SERIAL PRIMARY KEY,
-          guild_id VARCHAR(20) NOT NULL,
-          action_type VARCHAR(50) NOT NULL,
-          admin_id VARCHAR(20),
-          details JSONB,
-          created_at TIMESTAMP DEFAULT NOW()
-        )
-      `);
-
-      // Create indexes for performance
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS idx_images_guild_active ON images(guild_id, retired) WHERE retired = false;
-        CREATE INDEX IF NOT EXISTS idx_images_elo ON images(elo DESC);
-        CREATE INDEX IF NOT EXISTS idx_users_guild ON users(guild_id, user_id);
-        CREATE INDEX IF NOT EXISTS idx_duels_guild ON duels(guild_id, ended_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_votes_duel ON votes(duel_id, user_id);
-      `);
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+  // Leaderboard buttons
+  if (customId === 'leaderboard_top_images') {
+    await leaderboardCmd.handleTopImages(interaction);
+    return;
   }
 
-  async query(text, params) {
-    return this.pool.query(text, params);
+  if (customId === 'top_image_prev') {
+    await leaderboardCmd.handleImageNavigation(interaction, 'prev');
+    return;
   }
 
-  async getClient() {
-    return this.pool.connect();
+  if (customId === 'top_image_next') {
+    await leaderboardCmd.handleImageNavigation(interaction, 'next');
+    return;
   }
 
-  async close() {
-    await this.pool.end();
+  if (customId === 'leaderboard_back') {
+    await leaderboardCmd.handleBackToLeaderboard(interaction);
+    return;
+  }
+
+  // Admin buttons - navigation
+  if (customId === 'admin_back_main') {
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.showMainMenu(interaction, config);
+    return;
+  }
+
+  // Admin buttons - settings
+  if (customId === 'admin_set_k_factor') {
+    await interaction.showModal(adminConfig.createKFactorModal());
+    return;
+  }
+
+  if (customId === 'admin_set_starting_elo') {
+    await interaction.showModal(adminConfig.createStartingEloModal());
+    return;
+  }
+
+  if (customId === 'admin_set_duel_duration') {
+    await interaction.showModal(adminConfig.createDuelDurationModal());
+    return;
+  }
+
+  if (customId === 'admin_set_duel_interval') {
+    await interaction.showModal(adminConfig.createDuelIntervalModal());
+    return;
+  }
+
+  if (customId === 'admin_set_min_votes') {
+    await interaction.showModal(adminConfig.createMinVotesModal());
+    return;
+  }
+
+  if (customId === 'admin_set_losses_retirement') {
+    await interaction.showModal(adminConfig.createLossesRetirementModal());
+    return;
+  }
+
+  if (customId === 'admin_set_wildcard_chance') {
+    await interaction.showModal(adminConfig.createWildcardChanceModal());
+    return;
+  }
+
+  if (customId === 'admin_set_duel_channel') {
+    await interaction.showModal(adminConfig.createDuelChannelModal());
+    return;
+  }
+
+  // Admin buttons - duel controls
+  if (customId === 'admin_start_duel') {
+    await handleStartDuelButton(interaction);
+    return;
+  }
+
+  if (customId === 'admin_stop_duel') {
+    await handleStopDuelButton(interaction);
+    return;
+  }
+
+  if (customId === 'admin_skip_duel') {
+    await handleSkipDuelButton(interaction);
+    return;
+  }
+
+  if (customId === 'admin_pause_duel') {
+    await handlePauseDuelButton(interaction);
+    return;
+  }
+
+  if (customId === 'admin_resume_duel') {
+    await handleResumeDuelButton(interaction);
+    return;
+  }
+
+  // Admin buttons - image management
+  if (customId === 'admin_import_images') {
+    await interaction.showModal(adminConfig.createImportChannelsModal());
+    return;
+  }
+
+  if (customId === 'admin_list_images') {
+    await handleListImagesButton(interaction);
+    return;
+  }
+
+  if (customId === 'admin_clear_low_elo') {
+    await interaction.showModal(adminConfig.createEloThresholdModal());
+    return;
+  }
+
+  // Admin buttons - season management
+  if (customId === 'admin_reset_season') {
+    await interaction.showModal(adminConfig.createSeasonResetModal());
+    return;
   }
 }
 
-export default new Database();
+async function handleVoteButton(interaction) {
+  const imageId = parseInt(interaction.customId.split('_')[2]);
+  const guildId = interaction.guild.id;
+  const userId = interaction.user.id;
+
+  const success = await duelManager.castVote(guildId, userId, imageId);
+
+  if (success) {
+    await interaction.reply({ 
+      content: '✅ Your vote has been recorded! ♡', 
+      ephemeral: true 
+    });
+  } else {
+    await interaction.reply({ 
+      content: '❌ You\'ve already voted in this duel! You can only vote once. (>﹏<)', 
+      ephemeral: true 
+    });
+  }
+}
+
+async function handleCaptionButton(interaction) {
+  const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = await import('discord.js');
+  
+  const modal = new ModalBuilder()
+    .setCustomId('modal_add_caption')
+    .setTitle('Add Anonymous Caption');
+
+  const captionInput = new TextInputBuilder()
+    .setCustomId('caption_input')
+    .setLabel('Your caption (keep it friendly!)')
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder('Write your caption here...')
+    .setRequired(true)
+    .setMaxLength(200);
+
+  const imageSelect = new TextInputBuilder()
+    .setCustomId('image_select')
+    .setLabel('Which image? (Type A or B)')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('A or B')
+    .setRequired(true)
+    .setMaxLength(1);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(imageSelect),
+    new ActionRowBuilder().addComponents(captionInput)
+  );
+
+  await interaction.showModal(modal);
+}
+
+async function handleStartDuelButton(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const guildId = interaction.guild.id;
+    const config = await adminConfig.getOrCreateConfig(guildId);
+
+    // Start duel via duel scheduler
+    await interaction.client.duelScheduler.startDuelNow(guildId);
+
+    const successEmbed = embedUtils.createSuccessEmbed('Duel started successfully!');
+    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+
+    // Refresh the control panel
+    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.handleDuelControls(interaction, updatedConfig);
+  } catch (error) {
+    console.error('Error starting duel:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to start duel.');
+    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+  }
+}
+
+async function handleStopDuelButton(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const guildId = interaction.guild.id;
+    
+    // End current duel
+    await interaction.client.duelScheduler.endDuelNow(guildId);
+
+    const successEmbed = embedUtils.createSuccessEmbed('Current duel stopped!');
+    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+
+    // Refresh the control panel
+    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.handleDuelControls(interaction, updatedConfig);
+  } catch (error) {
+    console.error('Error stopping duel:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to stop duel.');
+    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+  }
+}
+
+async function handleSkipDuelButton(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const guildId = interaction.guild.id;
+    
+    // End current and start new
+    await interaction.client.duelScheduler.endDuelNow(guildId);
+    await interaction.client.duelScheduler.startDuelNow(guildId);
+
+    const successEmbed = embedUtils.createSuccessEmbed('Skipped to next duel!');
+    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+
+    // Refresh the control panel
+    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.handleDuelControls(interaction, updatedConfig);
+  } catch (error) {
+    console.error('Error skipping duel:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to skip duel.');
+    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+  }
+}
+
+async function handlePauseDuelButton(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const guildId = interaction.guild.id;
+    
+    await database.query(
+      'UPDATE guild_config SET duel_paused = true WHERE guild_id = $1',
+      [guildId]
+    );
+
+    const successEmbed = embedUtils.createSuccessEmbed('Duel scheduling paused!');
+    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+
+    // Refresh the control panel
+    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.handleDuelControls(interaction, updatedConfig);
+  } catch (error) {
+    console.error('Error pausing duels:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to pause scheduling.');
+    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+  }
+}
+
+async function handleResumeDuelButton(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const guildId = interaction.guild.id;
+    
+    await database.query(
+      'UPDATE guild_config SET duel_paused = false WHERE guild_id = $1',
+      [guildId]
+    );
+
+    const successEmbed = embedUtils.createSuccessEmbed('Duel scheduling resumed!');
+    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+
+    // Refresh the control panel
+    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.handleDuelControls(interaction, updatedConfig);
+  } catch (error) {
+    console.error('Error resuming duels:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to resume scheduling.');
+    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+  }
+}
+
+async function handleListImagesButton(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const guildId = interaction.guild.id;
+    
+    const result = await database.query(
+      `SELECT id, elo, wins, losses, uploader_id, retired 
+       FROM images 
+       WHERE guild_id = $1 
+       ORDER BY elo DESC 
+       LIMIT 25`,
+      [guildId]
+    );
+
+    if (result.rows.length === 0) {
+      const errorEmbed = embedUtils.createErrorEmbed('No images found in database.');
+      await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+      return;
+    }
+
+    const embed = embedUtils.createBaseEmbed();
+    embed.setTitle('📋 Image List (Top 25 by ELO)');
+    
+    let description = '```\n';
+    description += 'ID    | ELO  | Record  | Status\n';
+    description += '------|------|---------|-------\n';
+    
+    result.rows.forEach(img => {
+      const status = img.retired ? '❌ RET' : '✅ ACT';
+      description += `${String(img.id).padEnd(6)}| ${String(img.elo).padEnd(5)}| ${img.wins}W-${img.losses}L | ${status}\n`;
+    });
+    
+    description += '```';
+    embed.setDescription(description);
+
+    await interaction.followUp({ embeds: [embed], ephemeral: true });
+  } catch (error) {
+    console.error('Error listing images:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to list images.');
+    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+  }
+}
+
+export default { handleButtonInteraction };
