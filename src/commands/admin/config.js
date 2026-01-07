@@ -265,7 +265,10 @@ export default {
   },
 
   async handleImageManagement(interaction, config) {
-    await interaction.deferUpdate();
+    // Only defer if not already replied/deferred
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferUpdate();
+    }
 
     const guildId = interaction.guild.id;
 
