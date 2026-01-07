@@ -6,7 +6,7 @@ dotenv.config();
 const commands = [
   new SlashCommandBuilder()
     .setName('idolduel')
-    .setDescription('IdolDuel commands')
+    .setDescription('IdolDuel bot commands')
     .addSubcommand(subcommand =>
       subcommand
         .setName('profile')
