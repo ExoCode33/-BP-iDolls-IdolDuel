@@ -5,7 +5,8 @@ import {
   ButtonStyle,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  MessageFlags
 } from 'discord.js';
 import database from '../../database/database.js';
 import embedUtils from '../../utils/embeds.js';
@@ -16,11 +17,11 @@ export default {
     // Check if user has admin role
     if (!this.isAdmin(interaction)) {
       const errorEmbed = embedUtils.createErrorEmbed('You need the admin role to use this command!');
-      await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+      await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
       const guildId = interaction.guild.id;
