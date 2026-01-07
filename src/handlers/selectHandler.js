@@ -23,6 +23,9 @@ export async function handleSelectMenu(interaction) {
       case 'season_management':
         await adminConfig.handleSeasonManagement(interaction, config);
         break;
+      case 'system_reset':
+        await adminConfig.handleSystemReset(interaction, config);
+        break;
       default:
         await interaction.reply({ content: 'Unknown option', ephemeral: true });
     }
