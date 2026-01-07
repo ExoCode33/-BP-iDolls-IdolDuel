@@ -4,6 +4,7 @@ import embedUtils from '../utils/embeds.js';
 import adminConfig from '../commands/admin/config.js';
 import eloService from '../services/elo.js';
 import duelManager from '../services/duelManager.js';
+import { MessageFlags } from 'discord.js';
 
 export async function handleModalSubmit(interaction) {
   const modalId = interaction.customId;
@@ -86,7 +87,7 @@ async function handleKFactorModal(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed(`K-factor updated to ${value}!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     // Refresh settings page
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
@@ -94,7 +95,7 @@ async function handleKFactorModal(interaction) {
   } catch (error) {
     console.error('Error updating K-factor:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Invalid K-factor value. Please enter a number between 1 and 100.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -114,14 +115,14 @@ async function handleStartingEloModal(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed(`Starting ELO updated to ${value}!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.handleEloSettings(interaction, config);
   } catch (error) {
     console.error('Error updating starting ELO:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Invalid starting ELO. Please enter a number between 100 and 5000.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -143,14 +144,14 @@ async function handleDuelDurationModal(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed(`Duel duration updated to ${minutes} minutes!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.handleBasicSettings(interaction, config);
   } catch (error) {
     console.error('Error updating duel duration:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Invalid duration. Please enter minutes between 1 and 1440.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -172,14 +173,14 @@ async function handleDuelIntervalModal(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed(`Duel interval updated to ${minutes} minutes!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.handleBasicSettings(interaction, config);
   } catch (error) {
     console.error('Error updating duel interval:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Invalid interval. Please enter minutes between 1 and 1440.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -199,14 +200,14 @@ async function handleMinVotesModal(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed(`Minimum votes updated to ${value}!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.handleEloSettings(interaction, config);
   } catch (error) {
     console.error('Error updating min votes:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Invalid value. Please enter a number between 0 and 50.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -226,14 +227,14 @@ async function handleLossesRetirementModal(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed(`Losses before retirement updated to ${value}!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.handleEloSettings(interaction, config);
   } catch (error) {
     console.error('Error updating losses:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Invalid value. Please enter a number between 1 and 20.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -255,19 +256,19 @@ async function handleWildcardChanceModal(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed(`Wildcard chance updated to ${value}%!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.handleEloSettings(interaction, config);
   } catch (error) {
     console.error('Error updating wildcard chance:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Invalid percentage. Please enter a number between 0 and 100.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
 async function handleDuelChannelModal(interaction) {
-  await interaction.deferUpdate();
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const channelId = interaction.fields.getTextInputValue('duel_channel_input').trim();
@@ -284,19 +285,16 @@ async function handleDuelChannelModal(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed(`Duel channel set to <#${channelId}>!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
-
-    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
-    await adminConfig.handleBasicSettings(interaction, config);
+    await interaction.editReply({ embeds: [successEmbed] });
   } catch (error) {
     console.error('Error setting duel channel:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Invalid channel ID. Please make sure the channel exists.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.editReply({ embeds: [errorEmbed] });
   }
 }
 
 async function handleImportChannelsModal(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const channelIds = interaction.fields.getTextInputValue('import_channels_input')
@@ -430,14 +428,14 @@ async function handleEloThresholdModal(interaction) {
     const count = result.rows.length;
 
     const successEmbed = embedUtils.createSuccessEmbed(`Deleted ${count} image(s) with ELO below ${threshold}!`);
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.handleImageManagement(interaction, config);
   } catch (error) {
     console.error('Error clearing images:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to clear images.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -486,19 +484,19 @@ async function handleSeasonResetModal(interaction) {
     const successEmbed = embedUtils.createSuccessEmbed(
       `Season reset complete! Now in Season ${config.season_number + 1}!\nAll ELOs have been soft reset. ♡`
     );
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
     await adminConfig.handleSeasonManagement(interaction, updatedConfig);
   } catch (error) {
     console.error('Error resetting season:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Incorrect password or failed to reset season.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
 async function handleAddCaptionModal(interaction) {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const imageChoice = interaction.fields.getTextInputValue('image_select').toUpperCase();
