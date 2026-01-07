@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
 
 class S3Storage {
@@ -15,6 +16,7 @@ class S3Storage {
     });
     
     this.bucketName = process.env.S3_BUCKET_NAME;
+    this.endpoint = process.env.S3_ENDPOINT;
   }
 
   /**
@@ -40,6 +42,7 @@ class S3Storage {
           Key: s3Key,
           Body: buffer,
           ContentType: this.getContentType(extension),
+          ACL: 'public-read', // Make objects publicly readable
         },
       });
 
@@ -59,9 +62,43 @@ class S3Storage {
    * @returns {string} - Public URL to image
    */
   getImageUrl(s3Key) {
-    // For Railway bucket, construct the public URL
-    const endpoint = process.env.S3_ENDPOINT.replace('https://', '').replace('http://', '');
-    return `https://${this.bucketName}.${endpoint}/${s3Key}`;
+    try {
+      // Railway S3 buckets use this URL format
+      // Format: https://{endpoint}/{bucket}/{key}
+      const endpoint = this.endpoint.replace('https://', '').replace('http://', '');
+      
+      // Check if endpoint already includes the bucket (some S3 configs do this)
+      if (endpoint.includes(this.bucketName)) {
+        return `https://${endpoint}/${s3Key}`;
+      }
+      
+      // Standard format: endpoint/bucket/key
+      return `https://${endpoint}/${this.bucketName}/${s3Key}`;
+    } catch (error) {
+      console.error('❌ Error generating image URL:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get a signed URL for private objects (alternative method)
+   * @param {string} s3Key - S3 object key
+   * @param {number} expiresIn - URL expiration in seconds (default 1 hour)
+   * @returns {Promise<string>} - Signed URL
+   */
+  async getSignedImageUrl(s3Key, expiresIn = 3600) {
+    try {
+      const command = new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: s3Key,
+      });
+
+      const signedUrl = await getSignedUrl(this.client, command, { expiresIn });
+      return signedUrl;
+    } catch (error) {
+      console.error('❌ Error generating signed URL:', error);
+      return null;
+    }
   }
 
   /**
@@ -144,6 +181,33 @@ class S3Storage {
   isSupportedFormat(filename) {
     const extension = filename.split('.').pop().toLowerCase();
     return ['jpg', 'jpeg', 'png'].includes(extension);
+  }
+
+  /**
+   * Test S3 connection and configuration
+   * @returns {Promise<boolean>}
+   */
+  async testConnection() {
+    try {
+      console.log('🔍 Testing S3 connection...');
+      console.log(`Endpoint: ${this.endpoint}`);
+      console.log(`Bucket: ${this.bucketName}`);
+      console.log(`Region: ${process.env.S3_REGION || 'us-east-1'}`);
+      
+      // Try to list objects (this will fail if credentials are wrong)
+      const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      const command = new ListObjectsV2Command({
+        Bucket: this.bucketName,
+        MaxKeys: 1,
+      });
+      
+      await this.client.send(command);
+      console.log('✅ S3 connection successful');
+      return true;
+    } catch (error) {
+      console.error('❌ S3 connection test failed:', error.message);
+      return false;
+    }
   }
 }
 
