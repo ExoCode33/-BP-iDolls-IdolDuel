@@ -1,6 +1,5 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
 
 class S3Storage {
@@ -17,6 +16,12 @@ class S3Storage {
     
     this.bucketName = process.env.S3_BUCKET_NAME;
     this.endpoint = process.env.S3_ENDPOINT;
+    
+    // Log configuration on startup
+    console.log('📦 S3 Storage Configuration:');
+    console.log(`  Endpoint: ${this.endpoint}`);
+    console.log(`  Bucket: ${this.bucketName}`);
+    console.log(`  Region: ${process.env.S3_REGION || 'us-east-1'}`);
   }
 
   /**
@@ -35,6 +40,8 @@ class S3Storage {
       const extension = filename.split('.').pop().toLowerCase();
       const s3Key = `${guildId}/${hash}.${extension}`;
 
+      console.log(`📤 Uploading image: ${s3Key}`);
+
       const upload = new Upload({
         client: this.client,
         params: {
@@ -48,7 +55,11 @@ class S3Storage {
 
       await upload.done();
       
-      console.log(`✅ Image uploaded to S3: ${s3Key}`);
+      const url = this.getImageUrl(s3Key);
+      console.log(`✅ Image uploaded successfully`);
+      console.log(`   S3 Key: ${s3Key}`);
+      console.log(`   URL: ${url}`);
+      
       return { s3Key, hash };
     } catch (error) {
       console.error('❌ S3 upload error:', error);
@@ -57,46 +68,41 @@ class S3Storage {
   }
 
   /**
-   * Get image URL from S3
+   * Get image URL from S3 - with multiple format attempts
    * @param {string} s3Key - S3 object key
    * @returns {string} - Public URL to image
    */
   getImageUrl(s3Key) {
     try {
-      // Railway S3 buckets use this URL format
-      // Format: https://{endpoint}/{bucket}/{key}
+      if (!s3Key) {
+        console.error('❌ No S3 key provided to getImageUrl');
+        return null;
+      }
+
+      // Clean the endpoint
       const endpoint = this.endpoint.replace('https://', '').replace('http://', '');
       
-      // Check if endpoint already includes the bucket (some S3 configs do this)
+      // Try different URL formats based on common S3 configurations
+      let url;
+      
+      // Format 1: https://endpoint/bucket/key (most common for Railway)
+      url = `https://${endpoint}/${this.bucketName}/${s3Key}`;
+      
+      // Format 2: If endpoint already contains bucket subdomain
       if (endpoint.includes(this.bucketName)) {
-        return `https://${endpoint}/${s3Key}`;
+        url = `https://${endpoint}/${s3Key}`;
       }
       
-      // Standard format: endpoint/bucket/key
-      return `https://${endpoint}/${this.bucketName}/${s3Key}`;
+      // Format 3: Virtual-hosted style (bucket.endpoint/key)
+      // url = `https://${this.bucketName}.${endpoint}/${s3Key}`;
+      
+      console.log(`🔗 Generated URL: ${url}`);
+      return url;
     } catch (error) {
       console.error('❌ Error generating image URL:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Get a signed URL for private objects (alternative method)
-   * @param {string} s3Key - S3 object key
-   * @param {number} expiresIn - URL expiration in seconds (default 1 hour)
-   * @returns {Promise<string>} - Signed URL
-   */
-  async getSignedImageUrl(s3Key, expiresIn = 3600) {
-    try {
-      const command = new GetObjectCommand({
-        Bucket: this.bucketName,
-        Key: s3Key,
-      });
-
-      const signedUrl = await getSignedUrl(this.client, command, { expiresIn });
-      return signedUrl;
-    } catch (error) {
-      console.error('❌ Error generating signed URL:', error);
+      console.error('   S3 Key:', s3Key);
+      console.error('   Endpoint:', this.endpoint);
+      console.error('   Bucket:', this.bucketName);
       return null;
     }
   }
@@ -130,6 +136,8 @@ class S3Storage {
    */
   async downloadAndUpload(discordUrl, guildId) {
     try {
+      console.log(`⬇️ Downloading from Discord: ${discordUrl}`);
+      
       const response = await fetch(discordUrl);
       if (!response.ok) {
         throw new Error(`Failed to download image: ${response.statusText}`);
@@ -137,6 +145,8 @@ class S3Storage {
 
       const arrayBuffer = await response.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
+      
+      console.log(`   Downloaded ${buffer.length} bytes`);
       
       // Extract filename from URL
       const filename = discordUrl.split('/').pop().split('?')[0];
@@ -190,9 +200,9 @@ class S3Storage {
   async testConnection() {
     try {
       console.log('🔍 Testing S3 connection...');
-      console.log(`Endpoint: ${this.endpoint}`);
-      console.log(`Bucket: ${this.bucketName}`);
-      console.log(`Region: ${process.env.S3_REGION || 'us-east-1'}`);
+      console.log(`   Endpoint: ${this.endpoint}`);
+      console.log(`   Bucket: ${this.bucketName}`);
+      console.log(`   Region: ${process.env.S3_REGION || 'us-east-1'}`);
       
       // Try to list objects (this will fail if credentials are wrong)
       const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
@@ -201,13 +211,52 @@ class S3Storage {
         MaxKeys: 1,
       });
       
-      await this.client.send(command);
+      const result = await this.client.send(command);
       console.log('✅ S3 connection successful');
+      
+      if (result.Contents && result.Contents.length > 0) {
+        const firstObject = result.Contents[0];
+        const testUrl = this.getImageUrl(firstObject.Key);
+        console.log(`   Sample object: ${firstObject.Key}`);
+        console.log(`   Sample URL: ${testUrl}`);
+        console.log('');
+        console.log('⚠️  TEST THIS URL IN YOUR BROWSER:');
+        console.log(`   ${testUrl}`);
+        console.log('   If it works, URLs are correct. If not, we need to adjust the format.');
+      }
+      
       return true;
     } catch (error) {
       console.error('❌ S3 connection test failed:', error.message);
+      console.error('   Check your S3_ENDPOINT, S3_BUCKET_NAME, and credentials in .env');
       return false;
     }
+  }
+
+  /**
+   * Debug method to test a specific image URL
+   * @param {string} s3Key - S3 key to test
+   */
+  debugImageUrl(s3Key) {
+    console.log('\n🔍 DEBUG: Testing URL formats for key:', s3Key);
+    console.log('');
+    
+    const endpoint = this.endpoint.replace('https://', '').replace('http://', '');
+    
+    console.log('Format 1 (path-style):');
+    console.log(`  https://${endpoint}/${this.bucketName}/${s3Key}`);
+    console.log('');
+    
+    console.log('Format 2 (virtual-hosted):');
+    console.log(`  https://${this.bucketName}.${endpoint}/${s3Key}`);
+    console.log('');
+    
+    console.log('Format 3 (subdomain in endpoint):');
+    console.log(`  https://${endpoint}/${s3Key}`);
+    console.log('');
+    
+    console.log('Try each URL in your browser to see which one works!');
+    console.log('');
   }
 }
 
