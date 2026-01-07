@@ -43,6 +43,7 @@ export async function handleButtonInteraction(interaction) {
 
   // Admin buttons - navigation
   if (customId === 'admin_back_main') {
+    await interaction.deferUpdate();
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
     await adminConfig.showMainMenu(interaction, config);
     return;
