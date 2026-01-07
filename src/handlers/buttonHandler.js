@@ -3,6 +3,7 @@ import database from '../database/database.js';
 import embedUtils from '../utils/embeds.js';
 import adminConfig from '../commands/admin/config.js';
 import leaderboardCmd from '../commands/user/leaderboard.js';
+import { MessageFlags } from 'discord.js';
 
 export async function handleButtonInteraction(interaction) {
   const customId = interaction.customId;
@@ -147,12 +148,12 @@ async function handleVoteButton(interaction) {
   if (success) {
     await interaction.reply({ 
       content: '✅ Your vote has been recorded! ♡', 
-      ephemeral: true 
+      flags: MessageFlags.Ephemeral 
     });
   } else {
     await interaction.reply({ 
       content: '❌ You\'ve already voted in this duel! You can only vote once. (>﹏<)', 
-      ephemeral: true 
+      flags: MessageFlags.Ephemeral 
     });
   }
 }
@@ -199,7 +200,7 @@ async function handleStartDuelButton(interaction) {
     await interaction.client.duelScheduler.startDuelNow(guildId);
 
     const successEmbed = embedUtils.createSuccessEmbed('Duel started successfully!');
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     // Refresh the control panel
     const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
@@ -207,7 +208,7 @@ async function handleStartDuelButton(interaction) {
   } catch (error) {
     console.error('Error starting duel:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to start duel.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -221,7 +222,7 @@ async function handleStopDuelButton(interaction) {
     await interaction.client.duelScheduler.endDuelNow(guildId);
 
     const successEmbed = embedUtils.createSuccessEmbed('Current duel stopped!');
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     // Refresh the control panel
     const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
@@ -229,7 +230,7 @@ async function handleStopDuelButton(interaction) {
   } catch (error) {
     console.error('Error stopping duel:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to stop duel.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -244,7 +245,7 @@ async function handleSkipDuelButton(interaction) {
     await interaction.client.duelScheduler.startDuelNow(guildId);
 
     const successEmbed = embedUtils.createSuccessEmbed('Skipped to next duel!');
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     // Refresh the control panel
     const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
@@ -252,7 +253,7 @@ async function handleSkipDuelButton(interaction) {
   } catch (error) {
     console.error('Error skipping duel:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to skip duel.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -268,7 +269,7 @@ async function handlePauseDuelButton(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed('Duel scheduling paused!');
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     // Refresh the control panel
     const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
@@ -276,7 +277,7 @@ async function handlePauseDuelButton(interaction) {
   } catch (error) {
     console.error('Error pausing duels:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to pause scheduling.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -292,7 +293,7 @@ async function handleResumeDuelButton(interaction) {
     );
 
     const successEmbed = embedUtils.createSuccessEmbed('Duel scheduling resumed!');
-    await interaction.followUp({ embeds: [successEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     // Refresh the control panel
     const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
@@ -300,7 +301,7 @@ async function handleResumeDuelButton(interaction) {
   } catch (error) {
     console.error('Error resuming duels:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to resume scheduling.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -321,7 +322,7 @@ async function handleListImagesButton(interaction) {
 
     if (result.rows.length === 0) {
       const errorEmbed = embedUtils.createErrorEmbed('No images found in database.');
-      await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -340,11 +341,11 @@ async function handleListImagesButton(interaction) {
     description += '```';
     embed.setDescription(description);
 
-    await interaction.followUp({ embeds: [embed], ephemeral: true });
+    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
   } catch (error) {
     console.error('Error listing images:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to list images.');
-    await interaction.followUp({ embeds: [errorEmbed], ephemeral: true });
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
