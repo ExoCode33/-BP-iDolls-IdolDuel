@@ -69,6 +69,11 @@ export async function handleModalSubmit(interaction) {
     await handleAddCaptionModal(interaction);
     return;
   }
+
+  if (modalId === 'modal_system_reset') {
+    await handleSystemResetModal(interaction);
+    return;
+  }
 }
 
 async function handleKFactorModal(interaction) {
@@ -577,6 +582,22 @@ async function handleAddCaptionModal(interaction) {
     
     const errorEmbed = embedUtils.createErrorEmbed(message);
     await interaction.editReply({ embeds: [errorEmbed] });
+  }
+}
+
+async function handleSystemResetModal(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const password = interaction.fields.getTextInputValue('reset_password');
+    const confirmation = interaction.fields.getTextInputValue('reset_confirmation');
+
+    const systemReset = await import('../commands/admin/systemReset.js');
+    await systemReset.default.executeReset(interaction, password, confirmation);
+  } catch (error) {
+    console.error('Error in system reset:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('System reset failed: ' + error.message);
+    await interaction.editReply({ embeds: [errorEmbed], components: [] });
   }
 }
 
