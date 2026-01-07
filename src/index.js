@@ -30,19 +30,31 @@ const __dirname = dirname(__filename);
 
 async function loadCommands() {
   const commandsPath = join(__dirname, 'commands');
-  const commandFolders = readdirSync(commandsPath);
+  const items = readdirSync(commandsPath, { withFileTypes: true });
 
-  for (const folder of commandFolders) {
-    const folderPath = join(commandsPath, folder);
-    const commandFiles = readdirSync(folderPath).filter(file => file.endsWith('.js'));
-
-    for (const file of commandFiles) {
-      const filePath = join(folderPath, file);
+  for (const item of items) {
+    if (item.isFile() && item.name.endsWith('.js')) {
+      // Load command file directly from commands folder
+      const filePath = join(commandsPath, item.name);
       const command = await import(`file://${filePath}`);
       
       if ('data' in command.default && 'execute' in command.default) {
         client.commands.set(command.default.data.name, command.default);
         console.log(`✅ Loaded command: ${command.default.data.name}`);
+      }
+    } else if (item.isDirectory()) {
+      // Load commands from subfolder
+      const folderPath = join(commandsPath, item.name);
+      const commandFiles = readdirSync(folderPath).filter(file => file.endsWith('.js'));
+
+      for (const file of commandFiles) {
+        const filePath = join(folderPath, file);
+        const command = await import(`file://${filePath}`);
+        
+        if ('data' in command.default && 'execute' in command.default) {
+          client.commands.set(command.default.data.name, command.default);
+          console.log(`✅ Loaded command: ${command.default.data.name}`);
+        }
       }
     }
   }
