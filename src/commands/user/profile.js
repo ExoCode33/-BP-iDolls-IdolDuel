@@ -1,21 +1,9 @@
-import { SlashCommandBuilder } from 'discord.js';
 import database from '../../database/database.js';
 import storage from '../../services/storage.js';
 import embedUtils from '../../utils/embeds.js';
 
 export default {
-  data: new SlashCommandBuilder()
-    .setName('idolduel')
-    .setDescription('IdolDuel commands')
-    .addSubcommand(subcommand =>
-      subcommand
-        .setName('profile')
-        .setDescription('View your IdolDuel profile and stats')
-    ),
-
   async execute(interaction) {
-    if (interaction.options.getSubcommand() !== 'profile') return;
-
     await interaction.deferReply();
 
     try {
