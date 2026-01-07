@@ -3,6 +3,8 @@ import database from '../database/database.js';
 import embedUtils from '../utils/embeds.js';
 import adminConfig from '../commands/admin/config.js';
 import leaderboardCmd from '../commands/user/leaderboard.js';
+import storage from '../services/storage.js';
+import eloService from '../services/elo.js';
 import { MessageFlags } from 'discord.js';
 
 export async function handleButtonInteraction(interaction) {
@@ -124,6 +126,23 @@ export async function handleButtonInteraction(interaction) {
 
   if (customId === 'admin_list_images') {
     await handleListImagesButton(interaction);
+    return;
+  }
+
+  if (customId === 'image_list_prev') {
+    await handleImageListNavigation(interaction, 'prev');
+    return;
+  }
+
+  if (customId === 'image_list_next') {
+    await handleImageListNavigation(interaction, 'next');
+    return;
+  }
+
+  if (customId === 'admin_back_image_mgmt') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.handleImageManagement(interaction, config);
     return;
   }
 
@@ -313,11 +332,11 @@ async function handleListImagesButton(interaction) {
     const guildId = interaction.guild.id;
     
     const result = await database.query(
-      `SELECT id, elo, wins, losses, uploader_id, retired 
+      `SELECT id, elo, wins, losses, uploader_id, retired, s3_key 
        FROM images 
        WHERE guild_id = $1 
        ORDER BY elo DESC 
-       LIMIT 25`,
+       LIMIT 10`,
       [guildId]
     );
 
@@ -327,26 +346,133 @@ async function handleListImagesButton(interaction) {
       return;
     }
 
+    // Show first image with navigation
+    const images = result.rows;
+    const currentIndex = 0;
+    const image = images[currentIndex];
+    const imageUrl = storage.getImageUrl(image.s3_key);
+    
     const embed = embedUtils.createBaseEmbed();
-    embed.setTitle('📋 Image List (Top 25 by ELO)');
+    const winRate = eloService.calculateWinRate(image.wins, image.losses);
+    const status = image.retired ? '❌ RETIRED' : '✅ ACTIVE';
     
-    let description = '```\n';
-    description += 'ID    | ELO  | Record  | Status\n';
-    description += '------|------|---------|-------\n';
-    
-    result.rows.forEach(img => {
-      const status = img.retired ? '❌ RET' : '✅ ACT';
-      description += `${String(img.id).padEnd(6)}| ${String(img.elo).padEnd(5)}| ${img.wins}W-${img.losses}L | ${status}\n`;
-    });
-    
-    description += '```';
-    embed.setDescription(description);
+    embed.setTitle(`📋 Image #${image.id} — Rank ${currentIndex + 1}/${images.length}`);
+    embed.setDescription(
+      `\`\`\`css\n` +
+      `[ Image Details ]\n` +
+      `\`\`\`\n` +
+      `**Status:** ${status}\n` +
+      `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
+      `**Record:** ${image.wins}W - ${image.losses}L\n` +
+      `**Win Rate:** ${winRate}%\n` +
+      `**Uploader:** <@${image.uploader_id}>`
+    );
+    embed.setImage(imageUrl);
+    embed.setFooter({ text: `Image ${currentIndex + 1} of ${images.length} | Navigate with buttons ♡` });
 
-    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    // Navigation buttons
+    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+    const navButtons = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('image_list_prev')
+          .setLabel('◀ Previous')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true),
+        new ButtonBuilder()
+          .setCustomId('image_list_next')
+          .setLabel('Next ▶')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(images.length === 1),
+        new ButtonBuilder()
+          .setCustomId('admin_back_image_mgmt')
+          .setLabel('Back to Image Management')
+          .setStyle(ButtonStyle.Primary)
+      );
+
+    await interaction.followUp({ 
+      embeds: [embed], 
+      components: [navButtons],
+      flags: MessageFlags.Ephemeral,
+      content: `__IMAGE_LIST_DATA:${JSON.stringify(images.map(i => i.id))}:0__`
+    });
   } catch (error) {
     console.error('Error listing images:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to list images.');
     await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+  }
+}
+
+async function handleImageListNavigation(interaction, direction) {
+  await interaction.deferUpdate();
+
+  try {
+    const content = interaction.message.content;
+    const match = content.match(/__IMAGE_LIST_DATA:(.+?):(\d+)__/);
+    
+    if (!match) throw new Error('Navigation data not found');
+
+    const imageIds = JSON.parse(match[1]);
+    let currentIndex = parseInt(match[2]);
+
+    if (direction === 'next') currentIndex++;
+    if (direction === 'prev') currentIndex--;
+
+    // Get images
+    const result = await database.query(
+      `SELECT id, elo, wins, losses, uploader_id, retired, s3_key 
+       FROM images WHERE id = ANY($1) ORDER BY elo DESC`,
+      [imageIds]
+    );
+
+    const images = result.rows;
+    const image = images[currentIndex];
+    const imageUrl = storage.getImageUrl(image.s3_key);
+    
+    const embed = embedUtils.createBaseEmbed();
+    const winRate = eloService.calculateWinRate(image.wins, image.losses);
+    const status = image.retired ? '❌ RETIRED' : '✅ ACTIVE';
+    
+    embed.setTitle(`📋 Image #${image.id} — Rank ${currentIndex + 1}/${images.length}`);
+    embed.setDescription(
+      `\`\`\`css\n` +
+      `[ Image Details ]\n` +
+      `\`\`\`\n` +
+      `**Status:** ${status}\n` +
+      `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
+      `**Record:** ${image.wins}W - ${image.losses}L\n` +
+      `**Win Rate:** ${winRate}%\n` +
+      `**Uploader:** <@${image.uploader_id}>`
+    );
+    embed.setImage(imageUrl);
+    embed.setFooter({ text: `Image ${currentIndex + 1} of ${images.length} | Navigate with buttons ♡` });
+
+    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+    const navButtons = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('image_list_prev')
+          .setLabel('◀ Previous')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(currentIndex === 0),
+        new ButtonBuilder()
+          .setCustomId('image_list_next')
+          .setLabel('Next ▶')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(currentIndex === images.length - 1),
+        new ButtonBuilder()
+          .setCustomId('admin_back_image_mgmt')
+          .setLabel('Back to Image Management')
+          .setStyle(ButtonStyle.Primary)
+      );
+
+    await interaction.editReply({
+      embeds: [embed],
+      components: [navButtons],
+      content: `__IMAGE_LIST_DATA:${JSON.stringify(imageIds)}:${currentIndex}__`
+    });
+  } catch (error) {
+    console.error('Error navigating images:', error);
   }
 }
 
