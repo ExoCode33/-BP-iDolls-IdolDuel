@@ -69,6 +69,9 @@ client.once(Events.ClientReady, async () => {
   console.log(`🏠 Serving ${client.guilds.cache.size} guild(s)`);
 
   try {
+    // Auto-deploy commands
+    await deployCommands();
+
     // Initialize database
     await database.initialize();
 
@@ -89,6 +92,52 @@ client.once(Events.ClientReady, async () => {
     process.exit(1);
   }
 });
+
+async function deployCommands() {
+  try {
+    console.log('🔄 Deploying slash commands...');
+    
+    const { REST, Routes, SlashCommandBuilder } = await import('discord.js');
+    
+    const commands = [
+      new SlashCommandBuilder()
+        .setName('idolduel')
+        .setDescription('IdolDuel bot commands')
+        .addSubcommand(subcommand =>
+          subcommand
+            .setName('profile')
+            .setDescription('View your IdolDuel profile and stats')
+        )
+        .addSubcommand(subcommand =>
+          subcommand
+            .setName('leaderboard')
+            .setDescription('View the top users and images')
+        )
+        .addSubcommandGroup(group =>
+          group
+            .setName('admin')
+            .setDescription('Admin commands')
+            .addSubcommand(subcommand =>
+              subcommand
+                .setName('config')
+                .setDescription('Access admin configuration panel')
+            )
+        )
+    ].map(command => command.toJSON());
+
+    const rest = new REST().setToken(process.env.DISCORD_TOKEN);
+
+    const data = await rest.put(
+      Routes.applicationCommands(process.env.DISCORD_CLIENT_ID),
+      { body: commands },
+    );
+
+    console.log(`✅ Successfully deployed ${data.length} application (/) commands`);
+  } catch (error) {
+    console.error('❌ Error deploying commands:', error);
+    throw error;
+  }
+}
 
 // Command interaction handler
 client.on(Events.InteractionCreate, async interaction => {
