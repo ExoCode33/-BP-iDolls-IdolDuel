@@ -193,8 +193,10 @@ class DuelManager {
                 i1.*, i2.*,
                 i1.id as image1_id, i1.s3_key as image1_s3_key, i1.elo as image1_elo,
                 i1.wins as image1_wins, i1.losses as image1_losses, i1.uploader_id as image1_uploader,
+                i1.current_streak as image1_streak,
                 i2.id as image2_id, i2.s3_key as image2_s3_key, i2.elo as image2_elo,
-                i2.wins as image2_wins, i2.losses as image2_losses, i2.uploader_id as image2_uploader
+                i2.wins as image2_wins, i2.losses as image2_losses, i2.uploader_id as image2_uploader,
+                i2.current_streak as image2_streak
          FROM active_duels ad
          JOIN duels d ON ad.duel_id = d.id
          JOIN images i1 ON ad.image1_id = i1.id
@@ -218,7 +220,8 @@ class DuelManager {
           elo: row.image1_elo,
           wins: row.image1_wins,
           losses: row.image1_losses,
-          uploader_id: row.image1_uploader
+          uploader_id: row.image1_uploader,
+          current_streak: row.image1_streak || 0
         },
         image2: {
           id: row.image2_id,
@@ -226,7 +229,8 @@ class DuelManager {
           elo: row.image2_elo,
           wins: row.image2_wins,
           losses: row.image2_losses,
-          uploader_id: row.image2_uploader
+          uploader_id: row.image2_uploader,
+          current_streak: row.image2_streak || 0
         }
       };
     } catch (error) {
@@ -442,12 +446,18 @@ class DuelManager {
    * @returns {Promise<Object>}
    */
   async updateEloAndStats(winner, loser, winnerVotes, loserVotes, isWildcard, config) {
-    const isUpset = winner.elo < loser.elo;
-    const winnerStreak = winner.current_streak + 1;
+    // Ensure all values are valid numbers
+    const winnerElo = parseInt(winner.elo) || 1000;
+    const loserElo = parseInt(loser.elo) || 1000;
+    const winnerCurrentStreak = parseInt(winner.current_streak) || 0;
+    const loserLosses = parseInt(loser.losses) || 0;
+    
+    const isUpset = winnerElo < loserElo;
+    const winnerStreak = winnerCurrentStreak + 1;
 
     const eloChanges = eloService.calculateEloChange({
-      winner,
-      loser,
+      winner: { ...winner, elo: winnerElo, current_streak: winnerCurrentStreak },
+      loser: { ...loser, elo: loserElo },
       winnerVotes,
       loserVotes,
       isWildcard,
@@ -455,6 +465,10 @@ class DuelManager {
       winnerStreak,
       isUpset
     });
+
+    // Ensure ELO changes are valid numbers
+    const winnerNewElo = parseInt(eloChanges.winnerNewElo) || winnerElo;
+    const loserNewElo = parseInt(eloChanges.loserNewElo) || loserElo;
 
     // Update winner
     await database.query(
@@ -464,18 +478,18 @@ class DuelManager {
            total_votes_received = total_votes_received + $3,
            last_duel_at = NOW()
        WHERE id = $4`,
-      [eloChanges.winnerNewElo, winnerStreak, winnerVotes, winner.id]
+      [winnerNewElo, winnerStreak, winnerVotes, winner.id]
     );
 
     // Update loser
-    const newLosses = loser.losses + 1;
+    const newLosses = loserLosses + 1;
     await database.query(
       `UPDATE images
        SET elo = $1, losses = losses + 1, current_streak = 0,
            total_votes_received = total_votes_received + $2,
            last_duel_at = NOW()
        WHERE id = $3`,
-      [eloChanges.loserNewElo, loserVotes, loser.id]
+      [loserNewElo, loserVotes, loser.id]
     );
 
     // Check if loser should retire
@@ -492,7 +506,11 @@ class DuelManager {
       );
     }
 
-    return eloChanges;
+    return {
+      ...eloChanges,
+      winnerNewElo,
+      loserNewElo
+    };
   }
 }
 
