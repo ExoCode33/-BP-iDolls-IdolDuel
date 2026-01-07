@@ -1,6 +1,4 @@
 import { 
-  SlashCommandBuilder, 
-  PermissionFlagsBits,
   ActionRowBuilder,
   StringSelectMenuBuilder,
   ButtonBuilder,
@@ -14,20 +12,6 @@ import embedUtils from '../../utils/embeds.js';
 import storage from '../../services/storage.js';
 
 export default {
-  data: new SlashCommandBuilder()
-    .setName('idolduel')
-    .setDescription('IdolDuel commands')
-    .addSubcommand(subcommand =>
-      subcommand
-        .setName('admin')
-        .setDescription('Access admin configuration panel')
-        .addSubcommandGroup(group =>
-          group
-            .setName('config')
-            .setDescription('Configure bot settings')
-        )
-    ),
-
   async execute(interaction) {
     // Check if user has admin role
     if (!this.isAdmin(interaction)) {
