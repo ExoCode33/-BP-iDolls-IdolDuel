@@ -544,7 +544,7 @@ async function handleAddCaptionModal(interaction) {
 
     const imageId = imageChoice === 'A' ? activeDuel.image1.id : activeDuel.image2.id;
 
-    // Check if user already added caption
+    // Check if user already added caption to THIS image
     const existing = await database.query(
       'SELECT id FROM captions WHERE image_id = $1 AND user_id = $2',
       [imageId, userId]
@@ -554,7 +554,7 @@ async function handleAddCaptionModal(interaction) {
       throw new Error('Already added caption');
     }
 
-    // Check caption count for image
+    // Check caption count for image (max 3)
     const captionCount = await database.query(
       'SELECT COUNT(*) FROM captions WHERE image_id = $1',
       [imageId]
@@ -572,6 +572,12 @@ async function handleAddCaptionModal(interaction) {
 
     const successEmbed = embedUtils.createSuccessEmbed('Your anonymous caption has been added! ♡');
     await interaction.editReply({ embeds: [successEmbed] });
+
+    // Update the duel message with new caption
+    if (interaction.client.duelScheduler) {
+      await interaction.client.duelScheduler.updateDuelMessage(guildId);
+    }
+
   } catch (error) {
     console.error('Error adding caption:', error);
     let message = 'Failed to add caption.';
