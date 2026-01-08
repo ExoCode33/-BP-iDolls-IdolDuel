@@ -107,18 +107,20 @@ class DuelScheduler {
   }
 
   /**
-   * Get captions for both images in a duel
+   * Get captions for both images in the current duel only
    * @param {number} image1Id - Image 1 ID
    * @param {number} image2Id - Image 2 ID
+   * @param {number} duelId - Current duel ID
    * @returns {Promise<Object>} - Captions object {image1: [], image2: []}
    */
-  async getCaptions(image1Id, image2Id) {
+  async getCaptions(image1Id, image2Id, duelId) {
     try {
       const result = await database.query(
-        `SELECT image_id, caption FROM captions 
-         WHERE image_id IN ($1, $2) 
-         ORDER BY created_at DESC`,
-        [image1Id, image2Id]
+        `SELECT c.image_id, c.caption FROM captions c
+         WHERE c.image_id IN ($1, $2) 
+         AND c.created_at >= (SELECT started_at FROM duels WHERE id = $3)
+         ORDER BY c.created_at ASC`,
+        [image1Id, image2Id, duelId]
       );
 
       const captions = { image1: [], image2: [] };
@@ -169,7 +171,7 @@ class DuelScheduler {
       const image2Url = await storage.getImageUrl(activeDuel.image2.s3_key);
 
       // Get captions
-      const captions = await this.getCaptions(activeDuel.image1.id, activeDuel.image2.id);
+      const captions = await this.getCaptions(activeDuel.image1.id, activeDuel.image2.id, activeDuel.duelId);
 
       // Create updated embeds with captions
       const duelData = {
