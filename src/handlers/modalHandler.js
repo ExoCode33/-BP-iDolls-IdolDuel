@@ -544,20 +544,24 @@ async function handleAddCaptionModal(interaction) {
 
     const imageId = imageChoice === 'A' ? activeDuel.image1.id : activeDuel.image2.id;
 
-    // Check if user already added caption to THIS image
+    // Check if user already added caption to THIS image in THIS DUEL
     const existing = await database.query(
-      'SELECT id FROM captions WHERE image_id = $1 AND user_id = $2',
-      [imageId, userId]
+      `SELECT c.id FROM captions c
+       WHERE c.image_id = $1 AND c.user_id = $2 
+       AND c.created_at >= (SELECT started_at FROM duels WHERE id = $3)`,
+      [imageId, userId, activeDuel.duelId]
     );
 
     if (existing.rows.length > 0) {
       throw new Error('Already added caption');
     }
 
-    // Check caption count for image (max 3)
+    // Check caption count for image IN THIS DUEL (max 3)
     const captionCount = await database.query(
-      'SELECT COUNT(*) FROM captions WHERE image_id = $1',
-      [imageId]
+      `SELECT COUNT(*) FROM captions c
+       WHERE c.image_id = $1
+       AND c.created_at >= (SELECT started_at FROM duels WHERE id = $2)`,
+      [imageId, activeDuel.duelId]
     );
 
     if (parseInt(captionCount.rows[0].count) >= 3) {
@@ -570,7 +574,7 @@ async function handleAddCaptionModal(interaction) {
       [imageId, userId, caption]
     );
 
-    const successEmbed = embedUtils.createSuccessEmbed('Your anonymous caption has been added! ♡');
+    const successEmbed = embedUtils.createSuccessEmbed('Caption added!');
     await interaction.editReply({ embeds: [successEmbed] });
 
     // Update the duel message with new caption
@@ -583,8 +587,8 @@ async function handleAddCaptionModal(interaction) {
     let message = 'Failed to add caption.';
     if (error.message === 'Invalid image choice') message = 'Please choose A or B!';
     if (error.message === 'No active duel') message = 'There is no active duel right now!';
-    if (error.message === 'Already added caption') message = 'You already added a caption to this image!';
-    if (error.message === 'Max captions reached') message = 'This image already has 3 captions!';
+    if (error.message === 'Already added caption') message = 'You already added a caption to this image in this duel!';
+    if (error.message === 'Max captions reached') message = 'This image already has 3 captions in this duel!';
     
     const errorEmbed = embedUtils.createErrorEmbed(message);
     await interaction.editReply({ embeds: [errorEmbed] });
