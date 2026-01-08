@@ -58,12 +58,19 @@ client.once(Events.ClientReady, async (c) => {
       commands.push(command.data.toJSON());
     }
     
-    await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: commands }
-    );
+    // FIX: Use DISCORD_CLIENT_ID instead of CLIENT_ID
+    const clientId = process.env.DISCORD_CLIENT_ID || process.env.CLIENT_ID;
     
-    console.log('✅ Successfully deployed ' + commands.length + ' application (/) commands');
+    if (!clientId) {
+      console.error('❌ Missing DISCORD_CLIENT_ID in environment variables!');
+    } else {
+      await rest.put(
+        Routes.applicationCommands(clientId),
+        { body: commands }
+      );
+      
+      console.log('✅ Successfully deployed ' + commands.length + ' application (/) commands');
+    }
   } catch (error) {
     console.error('❌ Error deploying commands:', error);
   }
@@ -79,10 +86,10 @@ client.once(Events.ClientReady, async (c) => {
   
   // Connect to Redis
   try {
-    await redis.connect();
-    console.log('✅ Redis connected');
+    await redis.initialize();
+    console.log('✅ Redis initialized');
   } catch (error) {
-    console.error('❌ Redis connection failed:', error);
+    console.error('⚠️  Redis initialization failed (will use PostgreSQL fallback):', error.message);
   }
 
   // Test S3 connection
@@ -210,7 +217,9 @@ process.on('SIGINT', async () => {
     client.duelScheduler.stop();
   }
   
-  await redis.disconnect();
+  if (redis.isConnected) {
+    await redis.close();
+  }
   await database.close();
   
   process.exit(0);
