@@ -364,7 +364,7 @@ async function handleListImagesButton(interaction) {
     const images = result.rows;
     const currentIndex = 0;
     const image = images[currentIndex];
-    const imageUrl = storage.getImageUrl(image.s3_key);
+    const imageUrl = await storage.getImageUrl(image.s3_key); // AWAIT added for signed URLs
     
     const embed = embedUtils.createBaseEmbed();
     const winRate = eloService.calculateWinRate(image.wins, image.losses);
@@ -443,7 +443,7 @@ async function handleImageListNavigation(interaction, direction) {
 
     const images = result.rows;
     const image = images[currentIndex];
-    const imageUrl = storage.getImageUrl(image.s3_key);
+    const imageUrl = await storage.getImageUrl(image.s3_key); // AWAIT added for signed URLs
     
     const embed = embedUtils.createBaseEmbed();
     const winRate = eloService.calculateWinRate(image.wins, image.losses);
