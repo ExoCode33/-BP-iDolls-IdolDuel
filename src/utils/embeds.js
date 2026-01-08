@@ -15,21 +15,21 @@ class EmbedUtils {
   }
 
   /**
-   * Create duel embed
+   * Create duel embeds - returns an array of embeds to show both images properly
    * @param {Object} duel - Duel data
    * @param {string} image1Url - Image 1 URL
    * @param {string} image2Url - Image 2 URL
    * @param {Date} endsAt - Duel end time
-   * @returns {EmbedBuilder}
+   * @returns {EmbedBuilder[]} - Array of embeds
    */
   createDuelEmbed(duel, image1Url, image2Url, endsAt) {
-    const embed = this.createBaseEmbed();
-    
     const wildcard = duel.isWildcard ? '🎲 **WILDCARD DUEL!** 🎲\n' : '';
     const timestamp = Math.floor(endsAt.getTime() / 1000);
 
-    embed.setTitle('☆ IdolDuel — Vote Now! ☆');
-    embed.setDescription(
+    // Main info embed (no image)
+    const infoEmbed = this.createBaseEmbed();
+    infoEmbed.setTitle('☆ IdolDuel — Vote Now! ☆');
+    infoEmbed.setDescription(
       `${wildcard}` +
       `\`\`\`diff\n` +
       `+ ♡ Cast your vote below! ♡\n` +
@@ -41,12 +41,21 @@ class EmbedUtils {
       `⏰ Duel ends <t:${timestamp}:R>\n` +
       `💬 Add anonymous captions with the button below!`
     );
+    infoEmbed.setFooter({ text: '>^u^< Vote for your favorite! You can only vote once!' });
 
-    embed.setImage(image1Url);
-    embed.setThumbnail(image2Url);
-    embed.setFooter({ text: '>^u^< Vote for your favorite! You can only vote once!' });
+    // Image A embed
+    const imageAEmbed = new EmbedBuilder()
+      .setColor(PINK_COLOR)
+      .setAuthor({ name: `📸 Image A — ELO: ${duel.image1.elo} ${eloService.getRankEmoji(duel.image1.elo)}` })
+      .setImage(image1Url);
 
-    return embed;
+    // Image B embed
+    const imageBEmbed = new EmbedBuilder()
+      .setColor(PINK_COLOR)
+      .setAuthor({ name: `📸 Image B — ELO: ${duel.image2.elo} ${eloService.getRankEmoji(duel.image2.elo)}` })
+      .setImage(image2Url);
+
+    return [infoEmbed, imageAEmbed, imageBEmbed];
   }
 
   /**
@@ -77,7 +86,7 @@ class EmbedUtils {
     const loserPercent = 100 - winnerPercent;
 
     const eloChange = results.eloChanges
-      ? `\n**ELO Change:** ${results.winner.id === results.eloChanges.winnerNewElo ? '+' : ''}${results.eloChanges.winnerEloChange}`
+      ? `\n**ELO Change:** +${results.eloChanges.winnerEloChange}`
       : '';
 
     embed.setTitle('✨ Duel Results! ✨');
