@@ -137,9 +137,9 @@ class DuelScheduler {
       const channel = await this.client.channels.fetch(config.duel_channel_id);
       if (!channel) return;
 
-      // Get image URLs
-      const image1Url = storage.getImageUrl(duelData.image1.s3_key);
-      const image2Url = storage.getImageUrl(duelData.image2.s3_key);
+      // Get signed URLs (await because they're async now)
+      const image1Url = await storage.getImageUrl(duelData.image1.s3_key);
+      const image2Url = await storage.getImageUrl(duelData.image2.s3_key);
 
       // Create embed
       const embed = embedUtils.createDuelEmbed(duelData, image1Url, image2Url, duelData.endsAt);
@@ -229,9 +229,9 @@ class DuelScheduler {
       const channel = await this.client.channels.fetch(config.duel_channel_id);
       if (!channel) return;
 
-      // Get image URLs
-      const winnerUrl = results.winner ? storage.getImageUrl(results.winner.s3_key) : null;
-      const loserUrl = results.loser ? storage.getImageUrl(results.loser.s3_key) : null;
+      // Get signed URLs for results (await because they're async)
+      const winnerUrl = results.winner ? await storage.getImageUrl(results.winner.s3_key) : null;
+      const loserUrl = results.loser ? await storage.getImageUrl(results.loser.s3_key) : null;
 
       // Create results embed
       const embed = embedUtils.createDuelResultsEmbed(results, winnerUrl, loserUrl);
