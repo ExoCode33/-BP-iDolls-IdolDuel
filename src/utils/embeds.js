@@ -23,39 +23,43 @@ class EmbedUtils {
    * @returns {EmbedBuilder[]} - Array of embeds
    */
   createDuelEmbed(duel, image1Url, image2Url, endsAt) {
-    const wildcard = duel.isWildcard ? '🎲 **WILDCARD DUEL!** 🎲\n' : '';
+    const wildcard = duel.isWildcard ? '🎲 **WILDCARD DUEL!** 🎲\n\n' : '';
     const timestamp = Math.floor(endsAt.getTime() / 1000);
 
-    // Main info embed (no image)
-    const infoEmbed = this.createBaseEmbed();
-    infoEmbed.setTitle('☆ IdolDuel — Vote Now! ☆');
-    infoEmbed.setDescription(
-      `${wildcard}` +
-      `\`\`\`diff\n` +
-      `+ ♡ Cast your vote below! ♡\n` +
-      `\`\`\`\n` +
-      `**Image A** — ELO: \`${duel.image1.elo}\` ${eloService.getRankEmoji(duel.image1.elo)}\n` +
-      `Record: ${duel.image1.wins}W - ${duel.image1.losses}L\n\n` +
-      `**Image B** — ELO: \`${duel.image2.elo}\` ${eloService.getRankEmoji(duel.image2.elo)}\n` +
-      `Record: ${duel.image2.wins}W - ${duel.image2.losses}L\n\n` +
-      `⏰ Duel ends <t:${timestamp}:R>\n` +
-      `💬 Add anonymous captions with the button below!`
-    );
-    infoEmbed.setFooter({ text: '>^u^< Vote for your favorite! You can only vote once!' });
-
-    // Image A embed
+    // Image A embed - with title and image A info
     const imageAEmbed = new EmbedBuilder()
       .setColor(PINK_COLOR)
-      .setAuthor({ name: `📸 Image A — ELO: ${duel.image1.elo} ${eloService.getRankEmoji(duel.image1.elo)}` })
+      .setTitle('☆ IdolDuel — Vote Now! ☆')
+      .setDescription(
+        `${wildcard}` +
+        `\`\`\`diff\n` +
+        `+ ♡ Cast your vote below! ♡\n` +
+        `\`\`\`\n` +
+        `**📸 Image A** — ELO: \`${duel.image1.elo}\` ${eloService.getRankEmoji(duel.image1.elo)}\n` +
+        `Record: ${duel.image1.wins}W - ${duel.image1.losses}L`
+      )
       .setImage(image1Url);
 
-    // Image B embed
+    // Image B embed - with image B info and footer
     const imageBEmbed = new EmbedBuilder()
       .setColor(PINK_COLOR)
-      .setAuthor({ name: `📸 Image B — ELO: ${duel.image2.elo} ${eloService.getRankEmoji(duel.image2.elo)}` })
-      .setImage(image2Url);
+      .setDescription(
+        `**📸 Image B** — ELO: \`${duel.image2.elo}\` ${eloService.getRankEmoji(duel.image2.elo)}\n` +
+        `Record: ${duel.image2.wins}W - ${duel.image2.losses}L`
+      )
+      .setImage(image2Url)
+      .setFooter({ text: '>^u^< Vote for your favorite! You can only vote once!' })
+      .setTimestamp();
 
-    return [infoEmbed, imageAEmbed, imageBEmbed];
+    // Timer embed - small embed with just the timer info
+    const timerEmbed = new EmbedBuilder()
+      .setColor(PINK_COLOR)
+      .setDescription(
+        `⏰ Duel ends <t:${timestamp}:R>\n` +
+        `💬 Add anonymous captions with the button below!`
+      );
+
+    return [imageAEmbed, imageBEmbed, timerEmbed];
   }
 
   /**
