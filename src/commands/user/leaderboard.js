@@ -67,7 +67,7 @@ export default {
 
       // Show first image
       const images = imagesResult.rows;
-      const imageUrl = storage.getImageUrl(images[0].s3_key);
+      const imageUrl = await storage.getImageUrl(images[0].s3_key); // AWAIT added for signed URLs
       const embed = embedUtils.createTopImagesEmbed(images, imageUrl, 0);
 
       // Create navigation buttons
@@ -128,7 +128,7 @@ export default {
       );
 
       const images = imagesResult.rows;
-      const imageUrl = storage.getImageUrl(images[currentIndex].s3_key);
+      const imageUrl = await storage.getImageUrl(images[currentIndex].s3_key); // AWAIT added for signed URLs
       const embed = embedUtils.createTopImagesEmbed(images, imageUrl, currentIndex);
 
       // Update navigation buttons
