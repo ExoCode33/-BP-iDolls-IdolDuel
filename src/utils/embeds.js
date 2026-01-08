@@ -43,8 +43,8 @@ class EmbedUtils {
 
     // Image A embed - includes header
     const imageAEmbed = new EmbedBuilder()
-      .setColor(0x2B2D31) // Dark Discord background
-      .setAuthor({ name: 'IDOL DUEL', iconURL: 'https://cdn.discordapp.com/embed/avatars/0.png' })
+      .setColor(PINK_COLOR)
+      .setAuthor({ name: 'iDolls Duel' })
       .setDescription(
         `**Image A**${wildcardText}\n\n` +
         `${eloService.getRankEmoji(duel.image1.elo)}  \`${duel.image1.elo}\` ELO\n\n` +
@@ -56,14 +56,15 @@ class EmbedUtils {
 
     // Image B embed
     const imageBEmbed = new EmbedBuilder()
-      .setColor(0x2B2D31) // Dark Discord background
+      .setColor(PINK_COLOR)
       .setDescription(
         `**Image B**\n\n` +
         `${eloService.getRankEmoji(duel.image2.elo)}  \`${duel.image2.elo}\` ELO\n\n` +
         `${captionsB}`
       )
       .setImage(image2Url)
-      .setFooter({ text: 'Vote below • One vote per user' });
+      .setFooter({ text: `⏱ Duel ends` })
+      .setTimestamp(endsAt);
 
     return [imageAEmbed, imageBEmbed];
   }
