@@ -52,7 +52,7 @@ export default {
 
       if (topImageResult.rows.length > 0) {
         topImage = topImageResult.rows[0];
-        topImageUrl = storage.getImageUrl(topImage.s3_key);
+        topImageUrl = await storage.getImageUrl(topImage.s3_key); // AWAIT added for signed URLs
       }
 
       const embed = embedUtils.createProfileEmbed(user, topImage, topImageUrl);
