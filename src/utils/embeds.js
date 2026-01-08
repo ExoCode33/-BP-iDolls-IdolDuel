@@ -2,6 +2,8 @@ import { EmbedBuilder } from 'discord.js';
 import eloService from '../services/elo.js';
 
 const PINK_COLOR = 0xFF69B4;
+const CYAN_COLOR = 0x00D4FF;
+const BLURPLE_COLOR = 0x5865F2;
 
 class EmbedUtils {
   /**
@@ -20,46 +22,62 @@ class EmbedUtils {
    * @param {string} image1Url - Image 1 URL
    * @param {string} image2Url - Image 2 URL
    * @param {Date} endsAt - Duel end time
+   * @param {Object} captions - Optional captions object {image1: [], image2: []}
    * @returns {EmbedBuilder[]} - Array of embeds
    */
-  createDuelEmbed(duel, image1Url, image2Url, endsAt) {
-    const wildcard = duel.isWildcard ? '🎲 **WILDCARD DUEL!** 🎲\n\n' : '';
+  createDuelEmbed(duel, image1Url, image2Url, endsAt, captions = { image1: [], image2: [] }) {
     const timestamp = Math.floor(endsAt.getTime() / 1000);
+    
+    // Wildcard banner with sparkles
+    const wildcardBanner = duel.isWildcard 
+      ? `\n✧･ﾟ: ✧ **🎲 WILDCARD DUEL 🎲** ✧ :･ﾟ✧\n*1.5x ELO stakes!*\n` 
+      : '';
 
-    // Image A embed - with title and image A info
-    const imageAEmbed = new EmbedBuilder()
-      .setColor(PINK_COLOR)
-      .setTitle('☆ IdolDuel — Vote Now! ☆')
+    // Header embed - Title, timer, and voting prompt at the TOP
+    const headerEmbed = new EmbedBuilder()
+      .setColor(CYAN_COLOR)
+      .setTitle('`☆ IdolDuel — Vote Now! ☆`')
       .setDescription(
-        `${wildcard}` +
-        `\`\`\`diff\n` +
-        `+ ♡ Cast your vote below! ♡\n` +
-        `\`\`\`\n` +
-        `**📸 Image A** — ELO: \`${duel.image1.elo}\` ${eloService.getRankEmoji(duel.image1.elo)}\n` +
-        `Record: ${duel.image1.wins}W - ${duel.image1.losses}L`
+        `\`\`\`ansi\n\u001b[0;36m♡ ═══════════════════════════ ♡\u001b[0m\n\`\`\`` +
+        `${wildcardBanner}` +
+        `\`\`\`ansi\n\u001b[0;34m    + ♡ Cast your vote below! ♡\u001b[0m\n\`\`\`\n` +
+        `⏰ **Duel ends** <t:${timestamp}:R>\n` +
+        `💬 **Add anonymous captions** with the button below!\n` +
+        `\u200B`
+      );
+
+    // Format captions for Image A
+    const captionsA = captions.image1.length > 0 
+      ? captions.image1.slice(0, 3).map(c => `┃ *"${c}"*`).join('\n')
+      : '┃ *No captions yet~ Be the first! ♡*';
+
+    // Image A embed
+    const imageAEmbed = new EmbedBuilder()
+      .setColor(BLURPLE_COLOR)
+      .setAuthor({ name: '📸 Image A', iconURL: 'https://cdn.discordapp.com/emojis/1234567890.png' })
+      .setDescription(
+        `${eloService.getRankEmoji(duel.image1.elo)} **ELO:** \`${duel.image1.elo}\` ┃ 📊 **Record:** ${duel.image1.wins}W - ${duel.image1.losses}L\n` +
+        `\n**💭 Captions:**\n${captionsA}`
       )
       .setImage(image1Url);
 
-    // Image B embed - with image B info and footer
+    // Format captions for Image B
+    const captionsB = captions.image2.length > 0 
+      ? captions.image2.slice(0, 3).map(c => `┃ *"${c}"*`).join('\n')
+      : '┃ *No captions yet~ Be the first! ♡*';
+
+    // Image B embed
     const imageBEmbed = new EmbedBuilder()
       .setColor(PINK_COLOR)
+      .setAuthor({ name: '📸 Image B' })
       .setDescription(
-        `**📸 Image B** — ELO: \`${duel.image2.elo}\` ${eloService.getRankEmoji(duel.image2.elo)}\n` +
-        `Record: ${duel.image2.wins}W - ${duel.image2.losses}L`
+        `${eloService.getRankEmoji(duel.image2.elo)} **ELO:** \`${duel.image2.elo}\` ┃ 📊 **Record:** ${duel.image2.wins}W - ${duel.image2.losses}L\n` +
+        `\n**💭 Captions:**\n${captionsB}`
       )
       .setImage(image2Url)
-      .setFooter({ text: '>^u^< Vote for your favorite! You can only vote once!' })
-      .setTimestamp();
+      .setFooter({ text: '>^u^< Vote for your favorite! You can only vote once!' });
 
-    // Timer embed - small embed with just the timer info
-    const timerEmbed = new EmbedBuilder()
-      .setColor(PINK_COLOR)
-      .setDescription(
-        `⏰ Duel ends <t:${timestamp}:R>\n` +
-        `💬 Add anonymous captions with the button below!`
-      );
-
-    return [imageAEmbed, imageBEmbed, timerEmbed];
+    return [headerEmbed, imageAEmbed, imageBEmbed];
   }
 
   /**
@@ -73,11 +91,10 @@ class EmbedUtils {
     const embed = this.createBaseEmbed();
 
     if (results.skipped) {
-      embed.setTitle('☆ Duel Skipped ☆');
+      embed.setTitle('`☆ Duel Skipped ☆`');
+      embed.setColor(0x808080);
       embed.setDescription(
-        `\`\`\`css\n` +
-        `[ No votes were cast... (>﹏<) ]\n` +
-        `\`\`\`\n` +
+        `\`\`\`ansi\n\u001b[0;33m[ No votes were cast... (>﹏<) ]\u001b[0m\n\`\`\`\n` +
         `The duel ended with no winner!\n` +
         `Better luck next time! ♡`
       );
@@ -90,19 +107,29 @@ class EmbedUtils {
     const loserPercent = 100 - winnerPercent;
 
     const eloChange = results.eloChanges
-      ? `\n**ELO Change:** +${results.eloChanges.winnerEloChange}`
+      ? ` *(+${results.eloChanges.winnerEloChange})*`
       : '';
 
-    embed.setTitle('✨ Duel Results! ✨');
+    const eloLoss = results.eloChanges
+      ? ` *(${results.eloChanges.loserEloChange})*`
+      : '';
+
+    // Create a visual vote bar
+    const barLength = 20;
+    const winnerBars = Math.round((winnerPercent / 100) * barLength);
+    const loserBars = barLength - winnerBars;
+    const voteBar = `\`${'█'.repeat(winnerBars)}${'░'.repeat(loserBars)}\``;
+
+    embed.setTitle('`✨ Duel Results! ✨`');
+    embed.setColor(0x00FF88);
     embed.setDescription(
-      `\`\`\`diff\n` +
-      `+ 🎉 We have a winner! 🎉\n` +
-      `\`\`\`\n` +
-      `**Winner:** ${winnerPercent}% of votes (${results.winnerVotes} votes)\n` +
+      `\`\`\`ansi\n\u001b[0;32m🎉 We have a winner! 🎉\u001b[0m\n\`\`\`\n` +
+      `**🏆 Winner** — ${winnerPercent}% (${results.winnerVotes} votes)\n` +
       `${eloService.getRankEmoji(results.eloChanges?.winnerNewElo || results.winner.elo)} **New ELO:** \`${results.eloChanges?.winnerNewElo || results.winner.elo}\`${eloChange}\n\n` +
-      `**Runner-up:** ${loserPercent}% of votes (${results.loserVotes} votes)\n` +
-      `${eloService.getRankEmoji(results.eloChanges?.loserNewElo || results.loser.elo)} **New ELO:** \`${results.eloChanges?.loserNewElo || results.loser.elo}\`\n\n` +
-      `Thanks for voting! ♡ >^u^<`
+      `${voteBar}\n\n` +
+      `**Runner-up** — ${loserPercent}% (${results.loserVotes} votes)\n` +
+      `${eloService.getRankEmoji(results.eloChanges?.loserNewElo || results.loser.elo)} **New ELO:** \`${results.eloChanges?.loserNewElo || results.loser.elo}\`${eloLoss}\n\n` +
+      `*Thanks for voting! ♡ >^u^<*`
     );
 
     if (winnerUrl) {
@@ -130,11 +157,9 @@ class EmbedUtils {
     const winRate = eloService.calculateWinRate(topImage?.wins || 0, topImage?.losses || 0);
     const rankName = eloService.getRankName(user.elo);
 
-    embed.setTitle(`☆ ${rankName} Profile ☆`);
+    embed.setTitle(`\`☆ ${rankName} Profile ☆\``);
     embed.setDescription(
-      `\`\`\`css\n` +
-      `[ User Stats ]\n` +
-      `\`\`\`\n` +
+      `\`\`\`ansi\n\u001b[0;36m[ User Stats ]\u001b[0m\n\`\`\`\n` +
       `${eloService.getRankEmoji(user.elo)} **ELO:** \`${user.elo}\`\n` +
       `🔥 **Current Streak:** ${user.current_streak}\n` +
       `⭐ **Best Streak:** ${user.best_streak}\n` +
@@ -171,23 +196,21 @@ class EmbedUtils {
   createLeaderboardEmbed(users, page = 1) {
     const embed = this.createBaseEmbed();
 
-    embed.setTitle('🏆 IdolDuel Leaderboard 🏆');
+    embed.setTitle('`🏆 IdolDuel Leaderboard 🏆`');
     embed.setDescription(
-      `\`\`\`diff\n` +
-      `+ Top ${users.length} Users by ELO\n` +
-      `\`\`\`\n`
+      `\`\`\`ansi\n\u001b[0;36m+ Top ${users.length} Users by ELO\u001b[0m\n\`\`\`\n`
     );
 
     const medals = ['🥇', '🥈', '🥉'];
     
     users.forEach((user, index) => {
       const position = (page - 1) * 15 + index + 1;
-      const medal = index < 3 ? medals[index] + ' ' : `${position}. `;
+      const medal = index < 3 ? medals[index] + ' ' : `\`${position}.\` `;
       const rankEmoji = eloService.getRankEmoji(user.elo);
       
       embed.addFields({
         name: `${medal}<@${user.user_id}>`,
-        value: `${rankEmoji} ELO: \`${user.elo}\` | Streak: ${user.current_streak} 🔥`,
+        value: `${rankEmoji} ELO: \`${user.elo}\` ┃ Streak: ${user.current_streak} 🔥`,
         inline: false
       });
     });
@@ -213,11 +236,9 @@ class EmbedUtils {
 
     const winRate = eloService.calculateWinRate(image.wins, image.losses);
 
-    embed.setTitle(`${medal} Top Image — Rank ${position}`);
+    embed.setTitle(`\`${medal} Top Image — Rank ${position}\``);
     embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Image Stats ]\n` +
-      `\`\`\`\n` +
+      `\`\`\`ansi\n\u001b[0;36m[ Image Stats ]\u001b[0m\n\`\`\`\n` +
       `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
       `**Record:** ${image.wins}W - ${image.losses}L\n` +
       `**Win Rate:** ${winRate}%\n` +
@@ -241,11 +262,9 @@ class EmbedUtils {
   createAdminConfigEmbed(config) {
     const embed = this.createBaseEmbed();
 
-    embed.setTitle('⚙️ Admin Configuration Panel ⚙️');
+    embed.setTitle('`⚙️ Admin Configuration Panel ⚙️`');
     embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Current Settings ]\n` +
-      `\`\`\`\n` +
+      `\`\`\`ansi\n\u001b[0;36m[ Current Settings ]\u001b[0m\n\`\`\`\n` +
       `**Duel Channel:** ${config.duel_channel_id ? `<#${config.duel_channel_id}>` : 'Not set'}\n` +
       `**Duel Duration:** ${config.duel_duration / 60} minutes\n` +
       `**Duel Interval:** ${config.duel_interval / 60} minutes\n` +
@@ -272,12 +291,11 @@ class EmbedUtils {
    */
   createErrorEmbed(message) {
     const embed = this.createBaseEmbed();
+    embed.setColor(0xFF6B6B);
     
-    embed.setTitle('❌ Oops! Something went wrong');
+    embed.setTitle('`❌ Oops! Something went wrong`');
     embed.setDescription(
-      `\`\`\`diff\n` +
-      `- ${message}\n` +
-      `\`\`\`\n` +
+      `\`\`\`ansi\n\u001b[0;31m- ${message}\u001b[0m\n\`\`\`\n` +
       `Please try again or contact an admin if the issue persists. (>﹏<)`
     );
 
@@ -291,12 +309,11 @@ class EmbedUtils {
    */
   createSuccessEmbed(message) {
     const embed = this.createBaseEmbed();
+    embed.setColor(0x00FF88);
     
-    embed.setTitle('✅ Success!');
+    embed.setTitle('`✅ Success!`');
     embed.setDescription(
-      `\`\`\`diff\n` +
-      `+ ${message}\n` +
-      `\`\`\`\n` +
+      `\`\`\`ansi\n\u001b[0;32m+ ${message}\u001b[0m\n\`\`\`\n` +
       `>^u^< ♡`
     );
 
