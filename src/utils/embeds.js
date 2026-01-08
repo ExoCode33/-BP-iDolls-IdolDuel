@@ -17,67 +17,57 @@ class EmbedUtils {
   }
 
   /**
-   * Create duel embeds - returns an array of embeds to show both images properly
+   * Create duel embeds - returns an array of 2 embeds (one per image)
    * @param {Object} duel - Duel data
    * @param {string} image1Url - Image 1 URL
    * @param {string} image2Url - Image 2 URL
    * @param {Date} endsAt - Duel end time
    * @param {Object} captions - Optional captions object {image1: [], image2: []}
-   * @returns {EmbedBuilder[]} - Array of embeds
+   * @returns {EmbedBuilder[]} - Array of 2 embeds
    */
   createDuelEmbed(duel, image1Url, image2Url, endsAt, captions = { image1: [], image2: [] }) {
     const timestamp = Math.floor(endsAt.getTime() / 1000);
     
-    // Wildcard banner with sparkles
-    const wildcardBanner = duel.isWildcard 
-      ? `\n✧･ﾟ: ✧ **🎲 WILDCARD DUEL 🎲** ✧ :･ﾟ✧\n*1.5x ELO stakes!*\n` 
+    // Wildcard text
+    const wildcardText = duel.isWildcard 
+      ? `\n🎲 **WILDCARD** ✧ *1.5x ELO stakes!*\n` 
       : '';
-
-    // Header embed - Title, timer, and voting prompt at the TOP
-    const headerEmbed = new EmbedBuilder()
-      .setColor(CYAN_COLOR)
-      .setTitle('`☆ IdolDuel — Vote Now! ☆`')
-      .setDescription(
-        `\`\`\`ansi\n\u001b[0;36m♡ ═══════════════════════════ ♡\u001b[0m\n\`\`\`` +
-        `${wildcardBanner}` +
-        `\`\`\`ansi\n\u001b[0;34m    + ♡ Cast your vote below! ♡\u001b[0m\n\`\`\`\n` +
-        `⏰ **Duel ends** <t:${timestamp}:R>\n` +
-        `💬 **Add anonymous captions** with the button below!\n` +
-        `\u200B`
-      );
 
     // Format captions for Image A
     const captionsA = captions.image1.length > 0 
-      ? captions.image1.slice(0, 3).map(c => `┃ *"${c}"*`).join('\n')
-      : '┃ *No captions yet~ Be the first! ♡*';
-
-    // Image A embed
-    const imageAEmbed = new EmbedBuilder()
-      .setColor(BLURPLE_COLOR)
-      .setAuthor({ name: '📸 Image A', iconURL: 'https://cdn.discordapp.com/emojis/1234567890.png' })
-      .setDescription(
-        `${eloService.getRankEmoji(duel.image1.elo)} **ELO:** \`${duel.image1.elo}\` ┃ 📊 **Record:** ${duel.image1.wins}W - ${duel.image1.losses}L\n` +
-        `\n**💭 Captions:**\n${captionsA}`
-      )
-      .setImage(image1Url);
+      ? captions.image1.slice(0, 3).map(c => `> *"${c}"*`).join('\n')
+      : '> *No captions yet~ ♡*';
 
     // Format captions for Image B
     const captionsB = captions.image2.length > 0 
-      ? captions.image2.slice(0, 3).map(c => `┃ *"${c}"*`).join('\n')
-      : '┃ *No captions yet~ Be the first! ♡*';
+      ? captions.image2.slice(0, 3).map(c => `> *"${c}"*`).join('\n')
+      : '> *No captions yet~ ♡*';
+
+    // Image A embed - includes header info
+    const imageAEmbed = new EmbedBuilder()
+      .setColor(0x5865F2) // Discord Blurple
+      .setAuthor({ name: '☆ IdolDuel — Vote Now! ☆' })
+      .setTitle('📸 Image A')
+      .setDescription(
+        `⏰ Duel ends <t:${timestamp}:R> • 💬 Add captions below!${wildcardText}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `${eloService.getRankEmoji(duel.image1.elo)} **ELO:** \`${duel.image1.elo}\` ┃ **Record:** ${duel.image1.wins}W - ${duel.image1.losses}L\n\n` +
+        `💭 **Captions:**\n${captionsA}`
+      )
+      .setImage(image1Url);
 
     // Image B embed
     const imageBEmbed = new EmbedBuilder()
-      .setColor(PINK_COLOR)
-      .setAuthor({ name: '📸 Image B' })
+      .setColor(0xFF69B4) // Hot Pink
+      .setTitle('📸 Image B')
       .setDescription(
-        `${eloService.getRankEmoji(duel.image2.elo)} **ELO:** \`${duel.image2.elo}\` ┃ 📊 **Record:** ${duel.image2.wins}W - ${duel.image2.losses}L\n` +
-        `\n**💭 Captions:**\n${captionsB}`
+        `${eloService.getRankEmoji(duel.image2.elo)} **ELO:** \`${duel.image2.elo}\` ┃ **Record:** ${duel.image2.wins}W - ${duel.image2.losses}L\n\n` +
+        `💭 **Captions:**\n${captionsB}`
       )
       .setImage(image2Url)
       .setFooter({ text: '>^u^< Vote for your favorite! You can only vote once!' });
 
-    return [headerEmbed, imageAEmbed, imageBEmbed];
+    return [imageAEmbed, imageBEmbed];
   }
 
   /**
