@@ -141,8 +141,8 @@ class DuelScheduler {
       const image1Url = await storage.getImageUrl(duelData.image1.s3_key);
       const image2Url = await storage.getImageUrl(duelData.image2.s3_key);
 
-      // Create embed
-      const embed = embedUtils.createDuelEmbed(duelData, image1Url, image2Url, duelData.endsAt);
+      // Create embeds (now returns an array)
+      const embeds = embedUtils.createDuelEmbed(duelData, image1Url, image2Url, duelData.endsAt);
 
       // Create buttons
       const buttons = new ActionRowBuilder()
@@ -164,8 +164,8 @@ class DuelScheduler {
             .setEmoji('💬')
         );
 
-      // Send message
-      const message = await channel.send({ embeds: [embed], components: [buttons] });
+      // Send message with multiple embeds
+      const message = await channel.send({ embeds: embeds, components: [buttons] });
 
       // Update active duel with message ID
       await database.query(
