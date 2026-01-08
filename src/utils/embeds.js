@@ -28,44 +28,42 @@ class EmbedUtils {
   createDuelEmbed(duel, image1Url, image2Url, endsAt, captions = { image1: [], image2: [] }) {
     const timestamp = Math.floor(endsAt.getTime() / 1000);
     
-    // Wildcard text
-    const wildcardText = duel.isWildcard 
-      ? `\n🎲 **WILDCARD** ✧ *1.5x ELO stakes!*\n` 
-      : '';
+    // Wildcard indicator
+    const wildcardText = duel.isWildcard ? '  ⚡ **WILDCARD**' : '';
 
     // Format captions for Image A
     const captionsA = captions.image1.length > 0 
-      ? captions.image1.slice(0, 3).map(c => `> *"${c}"*`).join('\n')
-      : '> *No captions yet~ ♡*';
+      ? captions.image1.slice(0, 3).map(c => `*"${c}"*`).join('\n')
+      : '*No captions yet*';
 
     // Format captions for Image B
     const captionsB = captions.image2.length > 0 
-      ? captions.image2.slice(0, 3).map(c => `> *"${c}"*`).join('\n')
-      : '> *No captions yet~ ♡*';
+      ? captions.image2.slice(0, 3).map(c => `*"${c}"*`).join('\n')
+      : '*No captions yet*';
 
-    // Image A embed - includes header info
+    // Image A embed - includes header
     const imageAEmbed = new EmbedBuilder()
-      .setColor(0x5865F2) // Discord Blurple
-      .setAuthor({ name: '☆ IdolDuel — Vote Now! ☆' })
-      .setTitle('📸 Image A')
+      .setColor(0x2B2D31) // Dark Discord background
+      .setAuthor({ name: 'IDOL DUEL', iconURL: 'https://cdn.discordapp.com/embed/avatars/0.png' })
       .setDescription(
-        `⏰ Duel ends <t:${timestamp}:R> • 💬 Add captions below!${wildcardText}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `${eloService.getRankEmoji(duel.image1.elo)} **ELO:** \`${duel.image1.elo}\` ┃ **Record:** ${duel.image1.wins}W - ${duel.image1.losses}L\n\n` +
-        `💭 **Captions:**\n${captionsA}`
+        `**Image A**${wildcardText}\n\n` +
+        `${eloService.getRankEmoji(duel.image1.elo)}  \`${duel.image1.elo}\` ELO\n\n` +
+        `${captionsA}`
       )
-      .setImage(image1Url);
+      .setImage(image1Url)
+      .setFooter({ text: `⏱ Ends` })
+      .setTimestamp(endsAt);
 
     // Image B embed
     const imageBEmbed = new EmbedBuilder()
-      .setColor(0xFF69B4) // Hot Pink
-      .setTitle('📸 Image B')
+      .setColor(0x2B2D31) // Dark Discord background
       .setDescription(
-        `${eloService.getRankEmoji(duel.image2.elo)} **ELO:** \`${duel.image2.elo}\` ┃ **Record:** ${duel.image2.wins}W - ${duel.image2.losses}L\n\n` +
-        `💭 **Captions:**\n${captionsB}`
+        `**Image B**\n\n` +
+        `${eloService.getRankEmoji(duel.image2.elo)}  \`${duel.image2.elo}\` ELO\n\n` +
+        `${captionsB}`
       )
       .setImage(image2Url)
-      .setFooter({ text: '>^u^< Vote for your favorite! You can only vote once!' });
+      .setFooter({ text: 'Vote below • One vote per user' });
 
     return [imageAEmbed, imageBEmbed];
   }
