@@ -1,19 +1,21 @@
-import { Client, GatewayIntentBits, Collection, Events } from 'discord.js';
+import { Client, GatewayIntentBits, Collection, Events, ActivityType } from 'discord.js';
 import dotenv from 'dotenv';
 import database from './database/database.js';
 import redis from './database/redis.js';
+import storage from './services/storage.js';
 import DuelScheduler from './services/duelScheduler.js';
 import { handleButtonInteraction } from './handlers/buttonHandler.js';
 import { handleModalSubmit } from './handlers/modalHandler.js';
 import { handleSelectMenu } from './handlers/selectHandler.js';
+import fs from 'fs';
+import path from 'path';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { readdirSync } from 'fs';
 
-// Load environment variables
 dotenv.config();
 
-// Create Discord client
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -22,191 +24,185 @@ const client = new Client({
   ],
 });
 
-// Load commands
 client.commands = new Collection();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Load commands
+const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
-async function loadCommands() {
-  const commandsPath = join(__dirname, 'commands');
-  const items = readdirSync(commandsPath, { withFileTypes: true });
-
-  for (const item of items) {
-    if (item.isFile() && item.name.endsWith('.js')) {
-      // Load command file directly from commands folder
-      const filePath = join(commandsPath, item.name);
-      const command = await import(`file://${filePath}`);
-      
-      if ('data' in command.default && 'execute' in command.default) {
-        client.commands.set(command.default.data.name, command.default);
-        console.log(`✅ Loaded command: ${command.default.data.name}`);
-      }
-    } else if (item.isDirectory()) {
-      // Load commands from subfolder
-      const folderPath = join(commandsPath, item.name);
-      const commandFiles = readdirSync(folderPath).filter(file => file.endsWith('.js'));
-
-      for (const file of commandFiles) {
-        const filePath = join(folderPath, file);
-        const command = await import(`file://${filePath}`);
-        
-        if ('data' in command.default && 'execute' in command.default) {
-          client.commands.set(command.default.data.name, command.default);
-          console.log(`✅ Loaded command: ${command.default.data.name}`);
-        }
-      }
-    }
+for (const file of commandFiles) {
+  const filePath = path.join(commandsPath, file);
+  const command = await import(`file://${filePath}`);
+  
+  if ('data' in command.default && 'execute' in command.default) {
+    client.commands.set(command.default.data.name, command.default);
+    console.log(`✅ Loaded command: ${command.default.data.name}`);
   }
 }
 
-// Bot ready event
-client.once(Events.ClientReady, async () => {
+client.once(Events.ClientReady, async (c) => {
   console.log('╔════════════════════════════════════╗');
   console.log('║     IdolDuel Bot Started! ♡        ║');
   console.log('╚════════════════════════════════════╝');
-  console.log(`📱 Logged in as ${client.user.tag}`);
-  console.log(`🏠 Serving ${client.guilds.cache.size} guild(s)`);
-
+  console.log(`📱 Logged in as ${c.user.tag}`);
+  console.log(`🏠 Serving ${c.guilds.cache.size} guild(s)`);
+  
+  // Deploy commands
+  console.log('🔄 Deploying slash commands...');
   try {
-    // Auto-deploy commands
-    await deployCommands();
-
-    // Initialize database
-    await database.initialize();
-
-    // Initialize Redis (optional)
-    await redis.initialize();
-
-    // Load commands
-    await loadCommands();
-
-    // Initialize and start duel scheduler
-    client.duelScheduler = new DuelScheduler(client);
-    await client.duelScheduler.start();
-
-    console.log('✅ All systems operational!');
-    console.log('═══════════════════════════════════');
-  } catch (error) {
-    console.error('❌ Initialization error:', error);
-    process.exit(1);
-  }
-});
-
-async function deployCommands() {
-  try {
-    console.log('🔄 Deploying slash commands...');
-    
-    const { REST, Routes, SlashCommandBuilder } = await import('discord.js');
-    
-    const commands = [
-      new SlashCommandBuilder()
-        .setName('idolduel')
-        .setDescription('IdolDuel bot commands')
-        .addSubcommand(subcommand =>
-          subcommand
-            .setName('profile')
-            .setDescription('View your IdolDuel profile and stats')
-        )
-        .addSubcommand(subcommand =>
-          subcommand
-            .setName('leaderboard')
-            .setDescription('View the top users and images')
-        )
-        .addSubcommandGroup(group =>
-          group
-            .setName('admin')
-            .setDescription('Admin commands')
-            .addSubcommand(subcommand =>
-              subcommand
-                .setName('config')
-                .setDescription('Access admin configuration panel')
-            )
-        )
-    ].map(command => command.toJSON());
-
+    const { REST, Routes } = await import('discord.js');
     const rest = new REST().setToken(process.env.DISCORD_TOKEN);
-
-    const data = await rest.put(
-      Routes.applicationCommands(process.env.DISCORD_CLIENT_ID),
-      { body: commands },
+    
+    const commands = [];
+    for (const [name, command] of client.commands) {
+      commands.push(command.data.toJSON());
+    }
+    
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: commands }
     );
-
-    console.log(`✅ Successfully deployed ${data.length} application (/) commands`);
+    
+    console.log('✅ Successfully deployed ' + commands.length + ' application (/) commands');
   } catch (error) {
     console.error('❌ Error deploying commands:', error);
-    throw error;
   }
-}
+  
+  // Initialize database
+  try {
+    await database.initialize();
+    console.log('✅ Database initialized successfully');
+  } catch (error) {
+    console.error('❌ Database initialization failed:', error);
+    process.exit(1);
+  }
+  
+  // Connect to Redis
+  try {
+    await redis.connect();
+    console.log('✅ Redis connected');
+  } catch (error) {
+    console.error('❌ Redis connection failed:', error);
+  }
 
-// Command interaction handler
+  // Test S3 connection
+  try {
+    await storage.testConnection();
+  } catch (error) {
+    console.error('⚠️  S3 connection test failed:', error.message);
+  }
+  
+  // Initialize and attach duel scheduler
+  console.log('🕐 Starting duel scheduler...');
+  client.duelScheduler = new DuelScheduler(client);
+  await client.duelScheduler.start();
+  console.log('✅ Duel scheduler started');
+  
+  // Set bot status
+  client.user.setActivity('idol battles ♡', { type: ActivityType.Watching });
+  
+  console.log('✅ All systems operational!');
+  console.log('═══════════════════════════════════');
+});
+
 client.on(Events.InteractionCreate, async interaction => {
   // Handle slash commands
   if (interaction.isChatInputCommand()) {
     const command = client.commands.get(interaction.commandName);
-
+    
     if (!command) {
       console.error(`No command matching ${interaction.commandName} was found.`);
       return;
     }
-
+    
     try {
       await command.execute(interaction);
     } catch (error) {
       console.error('Error executing command:', error);
       
-      const reply = {
-        content: '❌ There was an error executing this command! (>﹏<)',
-        ephemeral: true
+      const errorMessage = { 
+        content: 'There was an error executing this command! Please try again. (>﹏<)', 
+        ephemeral: true 
       };
-
+      
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(reply);
+        await interaction.followUp(errorMessage);
       } else {
-        await interaction.reply(reply);
+        await interaction.reply(errorMessage);
       }
     }
   }
-
+  
   // Handle button interactions
-  if (interaction.isButton()) {
+  else if (interaction.isButton()) {
     try {
       await handleButtonInteraction(interaction);
     } catch (error) {
       console.error('Error handling button:', error);
+      
+      const errorMessage = { 
+        content: 'There was an error processing your action! Please try again. (>﹏<)', 
+        ephemeral: true 
+      };
+      
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorMessage);
+      } else {
+        await interaction.reply(errorMessage);
+      }
     }
   }
-
-  // Handle modal submissions
-  if (interaction.isModalSubmit()) {
-    try {
-      await handleModalSubmit(interaction);
-    } catch (error) {
-      console.error('Error handling modal:', error);
-    }
-  }
-
+  
   // Handle select menu interactions
-  if (interaction.isStringSelectMenu()) {
+  else if (interaction.isStringSelectMenu()) {
     try {
       await handleSelectMenu(interaction);
     } catch (error) {
       console.error('Error handling select menu:', error);
+      
+      const errorMessage = { 
+        content: 'There was an error processing your selection! Please try again. (>﹏<)', 
+        ephemeral: true 
+      };
+      
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorMessage);
+      } else {
+        await interaction.reply(errorMessage);
+      }
+    }
+  }
+  
+  // Handle modal submissions
+  else if (interaction.isModalSubmit()) {
+    try {
+      await handleModalSubmit(interaction);
+    } catch (error) {
+      console.error('Error handling modal:', error);
+      
+      const errorMessage = { 
+        content: 'There was an error processing your submission! Please try again. (>﹏<)', 
+        ephemeral: true 
+      };
+      
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorMessage);
+      } else {
+        await interaction.reply(errorMessage);
+      }
     }
   }
 });
 
-// Error handling
+// Error handlers
+client.on(Events.Error, error => {
+  console.error('Discord client error:', error);
+});
+
 process.on('unhandledRejection', error => {
   console.error('Unhandled promise rejection:', error);
 });
 
-process.on('uncaughtException', error => {
-  console.error('Uncaught exception:', error);
-  process.exit(1);
-});
-
-// Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n⏹️  Shutting down gracefully...');
   
@@ -214,12 +210,11 @@ process.on('SIGINT', async () => {
     client.duelScheduler.stop();
   }
   
+  await redis.disconnect();
   await database.close();
-  await redis.close();
   
-  client.destroy();
   process.exit(0);
 });
 
-// Login to Discord
+// Login
 client.login(process.env.DISCORD_TOKEN);
