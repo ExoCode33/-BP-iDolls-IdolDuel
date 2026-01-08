@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
 import crypto from 'crypto';
 
@@ -11,7 +12,7 @@ class S3Storage {
         accessKeyId: process.env.S3_ACCESS_KEY_ID,
         secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
       },
-      forcePathStyle: true, // Required for Railway and some S3-compatible services
+      forcePathStyle: true,
     });
     
     this.bucketName = process.env.S3_BUCKET_NAME;
@@ -22,6 +23,7 @@ class S3Storage {
     console.log(`  Endpoint: ${this.endpoint}`);
     console.log(`  Bucket: ${this.bucketName}`);
     console.log(`  Region: ${process.env.S3_REGION || 'us-east-1'}`);
+    console.log(`  Using: Signed URLs (Railway S3)`);
   }
 
   /**
@@ -49,16 +51,14 @@ class S3Storage {
           Key: s3Key,
           Body: buffer,
           ContentType: this.getContentType(extension),
-          ACL: 'public-read', // Make objects publicly readable
+          // Railway S3 doesn't support ACL, remove it
         },
       });
 
       await upload.done();
       
-      const url = this.getImageUrl(s3Key);
       console.log(`✅ Image uploaded successfully`);
       console.log(`   S3 Key: ${s3Key}`);
-      console.log(`   URL: ${url}`);
       
       return { s3Key, hash };
     } catch (error) {
@@ -68,41 +68,32 @@ class S3Storage {
   }
 
   /**
-   * Get image URL from S3 - with multiple format attempts
+   * Get signed URL for an image (required for Railway S3)
    * @param {string} s3Key - S3 object key
-   * @returns {string} - Public URL to image
+   * @param {number} expiresIn - URL expiration in seconds (default 24 hours)
+   * @returns {Promise<string>} - Signed URL
    */
-  getImageUrl(s3Key) {
+  async getImageUrl(s3Key) {
     try {
       if (!s3Key) {
         console.error('❌ No S3 key provided to getImageUrl');
         return null;
       }
 
-      // Clean the endpoint
-      const endpoint = this.endpoint.replace('https://', '').replace('http://', '');
+      // Generate signed URL that expires in 24 hours
+      const command = new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: s3Key,
+      });
+
+      const signedUrl = await getSignedUrl(this.client, command, { 
+        expiresIn: 86400 // 24 hours
+      });
       
-      // Try different URL formats based on common S3 configurations
-      let url;
-      
-      // Format 1: https://endpoint/bucket/key (most common for Railway)
-      url = `https://${endpoint}/${this.bucketName}/${s3Key}`;
-      
-      // Format 2: If endpoint already contains bucket subdomain
-      if (endpoint.includes(this.bucketName)) {
-        url = `https://${endpoint}/${s3Key}`;
-      }
-      
-      // Format 3: Virtual-hosted style (bucket.endpoint/key)
-      // url = `https://${this.bucketName}.${endpoint}/${s3Key}`;
-      
-      console.log(`🔗 Generated URL: ${url}`);
-      return url;
+      return signedUrl;
     } catch (error) {
-      console.error('❌ Error generating image URL:', error);
+      console.error('❌ Error generating signed URL:', error);
       console.error('   S3 Key:', s3Key);
-      console.error('   Endpoint:', this.endpoint);
-      console.error('   Bucket:', this.bucketName);
       return null;
     }
   }
@@ -216,13 +207,10 @@ class S3Storage {
       
       if (result.Contents && result.Contents.length > 0) {
         const firstObject = result.Contents[0];
-        const testUrl = this.getImageUrl(firstObject.Key);
+        const testUrl = await this.getImageUrl(firstObject.Key);
         console.log(`   Sample object: ${firstObject.Key}`);
-        console.log(`   Sample URL: ${testUrl}`);
-        console.log('');
-        console.log('⚠️  TEST THIS URL IN YOUR BROWSER:');
-        console.log(`   ${testUrl}`);
-        console.log('   If it works, URLs are correct. If not, we need to adjust the format.');
+        console.log(`   Sample signed URL generated`);
+        console.log('   ✅ Railway S3 requires signed URLs (this is normal)');
       }
       
       return true;
@@ -231,32 +219,6 @@ class S3Storage {
       console.error('   Check your S3_ENDPOINT, S3_BUCKET_NAME, and credentials in .env');
       return false;
     }
-  }
-
-  /**
-   * Debug method to test a specific image URL
-   * @param {string} s3Key - S3 key to test
-   */
-  debugImageUrl(s3Key) {
-    console.log('\n🔍 DEBUG: Testing URL formats for key:', s3Key);
-    console.log('');
-    
-    const endpoint = this.endpoint.replace('https://', '').replace('http://', '');
-    
-    console.log('Format 1 (path-style):');
-    console.log(`  https://${endpoint}/${this.bucketName}/${s3Key}`);
-    console.log('');
-    
-    console.log('Format 2 (virtual-hosted):');
-    console.log(`  https://${this.bucketName}.${endpoint}/${s3Key}`);
-    console.log('');
-    
-    console.log('Format 3 (subdomain in endpoint):');
-    console.log(`  https://${endpoint}/${s3Key}`);
-    console.log('');
-    
-    console.log('Try each URL in your browser to see which one works!');
-    console.log('');
   }
 }
 
