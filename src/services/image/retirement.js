@@ -1,37 +1,33 @@
 /**
  * Image Retirement Service
- * Smart auto-retirement based on duel frequency
+ * Configurable retirement based on losses or ELO threshold
  */
 
 import database from '../../database/database.js';
 
 class RetirementService {
   /**
-   * Calculate retirement threshold based on duel frequency
-   * Images get ~2 days worth of duels to prove themselves
-   * 
-   * @param {number} duelInterval - Seconds between duels
-   * @returns {number} Number of losses before retirement
-   */
-  calculateThreshold(duelInterval) {
-    const duelsPerDay = 86400 / duelInterval;
-    const threshold = Math.max(3, Math.floor(duelsPerDay * 2));
-    
-    return threshold;
-  }
-
-  /**
-   * Check if an image should be retired
+   * Check if an image should be retired based on guild settings
    * @param {Object} image - Image record
-   * @param {number} threshold - Retirement threshold
+   * @param {number} retireAfterLosses - Retire after X losses (0 = disabled)
+   * @param {number} retireBelowElo - Retire below X ELO (0 = disabled)
    * @returns {boolean} True if should retire
    */
-  shouldRetire(image, threshold) {
+  shouldRetire(image, retireAfterLosses, retireBelowElo) {
     // Already retired
     if (image.retired) return false;
     
-    // Check consecutive losses
-    return image.losses >= threshold;
+    // Check losses threshold
+    if (retireAfterLosses > 0 && image.losses >= retireAfterLosses) {
+      return true;
+    }
+
+    // Check ELO threshold
+    if (retireBelowElo > 0 && image.elo < retireBelowElo) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -55,10 +51,19 @@ class RetirementService {
    * Check and retire images after a duel
    * @param {string} guildId - Guild ID
    * @param {number} loserId - Loser image ID
-   * @param {number} duelInterval - Duel interval in seconds
    * @returns {Promise<boolean>} True if image was retired
    */
-  async checkAndRetire(guildId, loserId, duelInterval) {
+  async checkAndRetire(guildId, loserId) {
+    // Get guild config
+    const configResult = await database.query(
+      'SELECT retire_after_losses, retire_below_elo FROM guild_config WHERE guild_id = $1',
+      [guildId]
+    );
+
+    if (configResult.rows.length === 0) return false;
+
+    const config = configResult.rows[0];
+
     // Get loser's stats
     const result = await database.query(
       'SELECT * FROM images WHERE guild_id = $1 AND id = $2',
@@ -69,12 +74,13 @@ class RetirementService {
 
     const loser = result.rows[0];
 
-    // Calculate threshold
-    const threshold = this.calculateThreshold(duelInterval);
-
     // Check if should retire
-    if (this.shouldRetire(loser, threshold)) {
-      await this.retireImage(guildId, loserId, 'consecutive_losses');
+    if (this.shouldRetire(loser, config.retire_after_losses, config.retire_below_elo)) {
+      const reason = config.retire_after_losses > 0 && loser.losses >= config.retire_after_losses
+        ? `${loser.losses} losses`
+        : `ELO below ${config.retire_below_elo}`;
+      
+      await this.retireImage(guildId, loserId, reason);
       return true;
     }
 
@@ -82,16 +88,20 @@ class RetirementService {
   }
 
   /**
-   * Get retirement status message
-   * @param {number} duelInterval - Duel interval in seconds
+   * Get retirement info string for display
+   * @param {number} retireAfterLosses - Retire after X losses
+   * @param {number} retireBelowElo - Retire below X ELO
    * @returns {string} Human-readable retirement info
    */
-  getRetirementInfo(duelInterval) {
-    const threshold = this.calculateThreshold(duelInterval);
-    const duelsPerDay = Math.round((86400 / duelInterval) * 10) / 10;
-    const daysToRetire = Math.round((threshold / duelsPerDay) * 10) / 10;
-
-    return `Smart Retirement: ${threshold} losses (≈${daysToRetire} days with ${duelsPerDay} duels/day)`;
+  getRetirementInfo(retireAfterLosses, retireBelowElo) {
+    if (retireAfterLosses > 0 && retireBelowElo > 0) {
+      return `Auto-Retire: ${retireAfterLosses} losses OR below ${retireBelowElo} ELO`;
+    } else if (retireAfterLosses > 0) {
+      return `Auto-Retire: After ${retireAfterLosses} losses`;
+    } else if (retireBelowElo > 0) {
+      return `Auto-Retire: Below ${retireBelowElo} ELO`;
+    }
+    return 'Auto-Retirement: Disabled';
   }
 
   /**
