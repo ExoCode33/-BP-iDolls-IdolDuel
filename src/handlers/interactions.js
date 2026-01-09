@@ -1,13 +1,14 @@
 /**
  * Enhanced Interaction Handler
- * Handles all buttons, modals, and admin functions
+ * Auto-deletes ephemeral messages after 3 seconds
+ * Refreshes admin panel after settings changes
  */
 
 import database from '../database/database.js';
 import duelManager from '../services/duel/manager.js';
 import importer from '../services/image/importer.js';
 import embedUtils from '../utils/embeds.js';
-import systemReset from '../commands/admin/systemReset.js';
+import adminCommand from '../commands/admin/admin.js';
 import { MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from 'discord.js';
 
 export async function handleInteractions(interaction) {
@@ -22,6 +23,19 @@ export async function handleInteractions(interaction) {
     await handleModal(interaction);
     return;
   }
+}
+
+/**
+ * Auto-delete ephemeral message after delay
+ */
+async function autoDeleteEphemeral(interaction, delay = 3000) {
+  setTimeout(async () => {
+    try {
+      await interaction.deleteReply();
+    } catch (error) {
+      // Message already deleted or interaction expired
+    }
+  }, delay);
 }
 
 /**
@@ -77,23 +91,6 @@ async function handleButton(interaction) {
     await showImportModal(interaction);
     return;
   }
-
-  // System reset
-  if (customId === 'admin_system_reset') {
-    await systemReset.showResetWarning(interaction);
-    return;
-  }
-
-  if (customId === 'confirm_system_reset') {
-    await systemReset.showPasswordModal(interaction);
-    return;
-  }
-
-  if (customId === 'cancel_system_reset') {
-    const embed = embedUtils.createSuccessEmbed('System reset cancelled.');
-    await interaction.update({ embeds: [embed], components: [] });
-    return;
-  }
 }
 
 /**
@@ -114,14 +111,6 @@ async function handleModal(interaction) {
 
   if (customId === 'modal_import_images') {
     await handleImportSubmit(interaction);
-    return;
-  }
-
-  if (customId === 'modal_system_reset') {
-    const password = interaction.fields.getTextInputValue('reset_password');
-    const confirmation = interaction.fields.getTextInputValue('reset_confirmation');
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    await systemReset.executeReset(interaction, password, confirmation);
     return;
   }
 }
@@ -253,12 +242,14 @@ async function handleScheduleSubmit(interaction) {
     if (isNaN(intervalMinutes) || intervalMinutes < 1) {
       const embed = embedUtils.createErrorEmbed('Invalid interval! Must be at least 1 minute.');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
     if (isNaN(durationMinutes) || durationMinutes < 1) {
       const embed = embedUtils.createErrorEmbed('Invalid duration! Must be at least 1 minute.');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
@@ -272,18 +263,28 @@ async function handleScheduleSubmit(interaction) {
       [intervalSeconds, durationSeconds, guildId]
     );
 
+    // Show success message
     const embed = embedUtils.createSuccessEmbed(
-      `Schedule updated!\n\n` +
-      `• Interval: ${intervalMinutes} minutes\n` +
-      `• Duration: ${durationMinutes} minutes\n\n` +
-      `Restart duels for changes to take effect.`
+      `Schedule updated to ${intervalMinutes} min!\n\nRestart duels for changes to take effect.`
     );
-
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
+
+    // Refresh admin panel in original message
+    const originalMessage = await interaction.channel.messages.fetch(interaction.message.id);
+    if (originalMessage) {
+      await adminCommand.showAdminPanel({ 
+        guild: interaction.guild,
+        editReply: async (data) => {
+          await originalMessage.edit(data);
+        }
+      }, true);
+    }
   } catch (error) {
     console.error('Error updating schedule:', error);
     const embed = embedUtils.createErrorEmbed('Failed to update schedule!');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -302,12 +303,14 @@ async function handleEloSubmit(interaction) {
     if (isNaN(startingElo) || startingElo < 0) {
       const embed = embedUtils.createErrorEmbed('Invalid starting ELO!');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
     if (isNaN(kFactor) || kFactor < 1) {
       const embed = embedUtils.createErrorEmbed('Invalid K-Factor! Must be at least 1.');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
@@ -317,18 +320,28 @@ async function handleEloSubmit(interaction) {
       [startingElo, kFactor, guildId]
     );
 
+    // Show success message
     const embed = embedUtils.createSuccessEmbed(
-      `ELO settings updated!\n\n` +
-      `• Starting ELO: ${startingElo}\n` +
-      `• K-Factor: ${kFactor}\n\n` +
-      `New images will start with ${startingElo} ELO.`
+      `ELO settings updated!\n\nStarting ELO: ${startingElo}\nK-Factor: ${kFactor}`
     );
-
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
+
+    // Refresh admin panel
+    const originalMessage = await interaction.channel.messages.fetch(interaction.message.id);
+    if (originalMessage) {
+      await adminCommand.showAdminPanel({ 
+        guild: interaction.guild,
+        editReply: async (data) => {
+          await originalMessage.edit(data);
+        }
+      }, true);
+    }
   } catch (error) {
     console.error('Error updating ELO settings:', error);
     const embed = embedUtils.createErrorEmbed('Failed to update ELO settings!');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -348,6 +361,7 @@ async function handleImportSubmit(interaction) {
     if (!channelIdMatch) {
       const embed = embedUtils.createErrorEmbed('Invalid channel! Please provide a channel ID or mention.');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
@@ -357,6 +371,7 @@ async function handleImportSubmit(interaction) {
     if (isNaN(messageLimit) || messageLimit < 1 || messageLimit > 100) {
       const embed = embedUtils.createErrorEmbed('Message limit must be between 1 and 100!');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
@@ -365,6 +380,7 @@ async function handleImportSubmit(interaction) {
     if (!channel || !channel.isTextBased()) {
       const embed = embedUtils.createErrorEmbed('Invalid channel or bot cannot access it!');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
@@ -388,17 +404,27 @@ async function handleImportSubmit(interaction) {
     }
 
     const successEmbed = embedUtils.createSuccessEmbed(
-      `Import complete!\n\n` +
-      `✅ Imported: ${imported} images\n` +
-      `⏭️ Skipped: ${skipped} (duplicates or invalid)\n\n` +
-      `Images are ready for duels!`
+      `Import complete!\n\n✅ Imported: ${imported}\n⏭️ Skipped: ${skipped}`
     );
 
     await interaction.editReply({ embeds: [successEmbed] });
+    autoDeleteEphemeral(interaction, 5000); // 5 seconds for import success
+
+    // Refresh admin panel
+    const originalMessage = await interaction.channel.messages.fetch(interaction.message.id);
+    if (originalMessage) {
+      await adminCommand.showAdminPanel({ 
+        guild: interaction.guild,
+        editReply: async (data) => {
+          await originalMessage.edit(data);
+        }
+      }, true);
+    }
   } catch (error) {
     console.error('Error importing images:', error);
     const embed = embedUtils.createErrorEmbed('Failed to import images! Check bot permissions.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -413,23 +439,22 @@ async function handleVote(interaction) {
     const guildId = interaction.guild.id;
     const userId = interaction.user.id;
 
-    // Get active duel
     const activeDuel = await duelManager.getActiveDuel(guildId);
 
     if (!activeDuel) {
       const embed = embedUtils.createErrorEmbed('No active duel found!');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
-    // Verify image is in this duel
     if (imageId !== activeDuel.image1.id && imageId !== activeDuel.image2.id) {
       const embed = embedUtils.createErrorEmbed('Invalid vote!');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
-    // Check if already voted
     const existingVote = await database.query(
       'SELECT image_id FROM votes WHERE duel_id = $1 AND user_id = $2',
       [activeDuel.duelId, userId]
@@ -441,10 +466,10 @@ async function handleVote(interaction) {
       if (votedImageId === imageId) {
         const embed = embedUtils.createErrorEmbed('You already voted for this image!');
         await interaction.editReply({ embeds: [embed] });
+        autoDeleteEphemeral(interaction);
         return;
       }
 
-      // Change vote
       await database.query(
         'UPDATE votes SET image_id = $1, voted_at = NOW() WHERE duel_id = $2 AND user_id = $3',
         [imageId, activeDuel.duelId, userId]
@@ -452,10 +477,10 @@ async function handleVote(interaction) {
 
       const embed = embedUtils.createSuccessEmbed('Vote changed! ♡');
       await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
       return;
     }
 
-    // Record new vote
     await database.query(
       'INSERT INTO votes (duel_id, user_id, image_id, voted_at) VALUES ($1, $2, $3, NOW())',
       [activeDuel.duelId, userId, imageId]
@@ -463,10 +488,12 @@ async function handleVote(interaction) {
 
     const embed = embedUtils.createSuccessEmbed('Vote recorded! ♡');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   } catch (error) {
     console.error('Error handling vote:', error);
     const embed = embedUtils.createErrorEmbed('Failed to record vote!');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -482,10 +509,12 @@ async function handleStartDuel(interaction) {
 
     const embed = embedUtils.createSuccessEmbed('Duel system started!');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   } catch (error) {
     console.error('Error starting duel:', error);
     const embed = embedUtils.createErrorEmbed('Failed to start duel system.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -501,10 +530,12 @@ async function handleStopDuel(interaction) {
 
     const embed = embedUtils.createSuccessEmbed('Duel system stopped.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   } catch (error) {
     console.error('Error stopping duel:', error);
     const embed = embedUtils.createErrorEmbed('Failed to stop duel system.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -518,12 +549,14 @@ async function handleSkipDuel(interaction) {
     const guildId = interaction.guild.id;
     await duelManager.skipDuel(guildId);
 
-    const embed = embedUtils.createSuccessEmbed('Duel skipped! Starting next duel...');
+    const embed = embedUtils.createSuccessEmbed('Duel skipped! Starting next...');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   } catch (error) {
     console.error('Error skipping duel:', error);
     const embed = embedUtils.createErrorEmbed('Failed to skip duel.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -543,10 +576,12 @@ async function handlePauseDuel(interaction) {
 
     const embed = embedUtils.createSuccessEmbed('Duel system paused.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   } catch (error) {
     console.error('Error pausing duel:', error);
-    const embed = embedUtils.createErrorEmbed('Failed to pause duel system.');
+    const embed = embedUtils.createErrorEmbed('Failed to pause.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -566,12 +601,14 @@ async function handleResumeDuel(interaction) {
 
     const embed = embedUtils.createSuccessEmbed('Duel system resumed.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
 
     await duelManager.checkGuild(guildId);
   } catch (error) {
     console.error('Error resuming duel:', error);
-    const embed = embedUtils.createErrorEmbed('Failed to resume duel system.');
+    const embed = embedUtils.createErrorEmbed('Failed to resume.');
     await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
