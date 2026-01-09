@@ -39,7 +39,7 @@ class EmbedUtils {
   }
 
   /**
-   * Create duel embed
+   * Create duel embed with two separate embeds for side-by-side display
    */
   createDuelEmbed(image1, image2, url1, url2, endsAt) {
     // Validate inputs
@@ -55,24 +55,38 @@ class EmbedUtils {
       throw new Error('Invalid endsAt: endsAt is undefined');
     }
 
-    const embed = new EmbedBuilder()
+    // Main embed with title and instructions
+    const mainEmbed = new EmbedBuilder()
       .setColor('#FF69B4')
       .setTitle('⚔️ Image Duel!')
       .setDescription(
         `**Vote for your favorite!**\n\n` +
-        `**Left Image**\n` +
-        `ELO: ${image1.elo || 1000} ${calculator.getRankEmoji(image1.elo || 1000)}\n` +
-        `Record: ${image1.wins || 0}W - ${image1.losses || 0}L\n\n` +
-        `**Right Image**\n` +
-        `ELO: ${image2.elo || 1000} ${calculator.getRankEmoji(image2.elo || 1000)}\n` +
-        `Record: ${image2.wins || 0}W - ${image2.losses || 0}L\n\n` +
         `Duel ends <t:${Math.floor(endsAt.getTime() / 1000)}:R>`
       )
-      .setImage(url1)
-      .setThumbnail(url2)
       .setTimestamp();
 
-    return embed;
+    // Left image embed
+    const leftEmbed = new EmbedBuilder()
+      .setColor('#4A90E2')
+      .setTitle('👈 Left Image')
+      .setDescription(
+        `**ELO:** ${image1.elo || 1000} ${calculator.getRankEmoji(image1.elo || 1000)}\n` +
+        `**Record:** ${image1.wins || 0}W - ${image1.losses || 0}L`
+      )
+      .setImage(url1);
+
+    // Right image embed
+    const rightEmbed = new EmbedBuilder()
+      .setColor('#E24A90')
+      .setTitle('👉 Right Image')
+      .setDescription(
+        `**ELO:** ${image2.elo || 1000} ${calculator.getRankEmoji(image2.elo || 1000)}\n` +
+        `**Record:** ${image2.wins || 0}W - ${image2.losses || 0}L`
+      )
+      .setImage(url2);
+
+    // Return array of embeds for side-by-side display
+    return [mainEmbed, leftEmbed, rightEmbed];
   }
 
   /**
@@ -101,24 +115,35 @@ class EmbedUtils {
     const totalVotes = votes.winner + votes.loser;
     const winPercentage = totalVotes > 0 ? Math.round((votes.winner / totalVotes) * 100) : 0;
 
-    const embed = new EmbedBuilder()
+    const mainEmbed = new EmbedBuilder()
       .setColor('#FFD700')
       .setTitle('🏆 Duel Complete!')
       .setDescription(
-        `**Winner**\n` +
-        `ELO: ${winner.elo} ${calculator.getRankEmoji(winner.elo)} (${winner.eloChange > 0 ? '+' : ''}${winner.eloChange})\n` +
-        `Record: ${winner.wins}W - ${winner.losses}L\n` +
-        `Votes: ${votes.winner} (${winPercentage}%)\n\n` +
-        `**Loser**\n` +
-        `ELO: ${loser.elo} ${calculator.getRankEmoji(loser.elo)} (${loser.eloChange > 0 ? '+' : ''}${loser.eloChange})\n` +
-        `Record: ${loser.wins}W - ${loser.losses}L\n` +
-        `Votes: ${votes.loser} (${100 - winPercentage}%)`
+        `**Total Votes:** ${totalVotes}\n` +
+        `**Winner:** ${votes.winner} votes (${winPercentage}%)\n` +
+        `**Loser:** ${votes.loser} votes (${100 - winPercentage}%)`
       )
-      .setImage(winnerUrl)
-      .setThumbnail(loserUrl)
       .setTimestamp();
 
-    return embed;
+    const winnerEmbed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('🏆 Winner')
+      .setDescription(
+        `**ELO:** ${winner.elo} ${calculator.getRankEmoji(winner.elo)} (${winner.eloChange > 0 ? '+' : ''}${winner.eloChange})\n` +
+        `**Record:** ${winner.wins}W - ${winner.losses}L`
+      )
+      .setImage(winnerUrl);
+
+    const loserEmbed = new EmbedBuilder()
+      .setColor('#FF0000')
+      .setTitle('💀 Loser')
+      .setDescription(
+        `**ELO:** ${loser.elo} ${calculator.getRankEmoji(loser.elo)} (${loser.eloChange > 0 ? '+' : ''}${loser.eloChange})\n` +
+        `**Record:** ${loser.wins}W - ${loser.losses}L`
+      )
+      .setImage(loserUrl);
+
+    return [mainEmbed, winnerEmbed, loserEmbed];
   }
 
   /**
