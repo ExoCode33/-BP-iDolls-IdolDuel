@@ -20,6 +20,10 @@ class DuelManager {
       );
 
       if (result.rows.length < 2) {
+        await this.logAdminEvent(guildId, 'duel_error', { 
+          error: 'Not enough active images',
+          activeCount: result.rows.length 
+        });
         console.log('⚠️  Not enough active images for a duel');
         return null;
       }
@@ -38,6 +42,10 @@ class DuelManager {
       }
     } catch (error) {
       console.error('❌ Error finding duel pair:', error);
+      await this.logAdminEvent(guildId, 'duel_error', { 
+        error: 'Failed to find duel pair',
+        message: error.message 
+      });
       return null;
     }
   }
@@ -131,6 +139,7 @@ class DuelManager {
 
       if (activeCheck.rows.length > 0) {
         console.log('⚠️  Duel already active for this guild');
+        await this.logAdminEvent(guildId, 'duel_error', { error: 'Duel already active' });
         return null;
       }
 
@@ -167,6 +176,12 @@ class DuelManager {
       }
 
       console.log(`✅ Duel started: Image ${image1.id} vs Image ${image2.id}`);
+      await this.logAdminEvent(guildId, 'duel_started', { 
+        duelId: duel.id,
+        image1Id: image1.id,
+        image2Id: image2.id,
+        isWildcard 
+      });
 
       return {
         duel,
@@ -177,6 +192,11 @@ class DuelManager {
       };
     } catch (error) {
       console.error('❌ Error starting duel:', error);
+      await this.logAdminEvent(guildId, 'duel_error', { 
+        error: 'Failed to start duel',
+        message: error.message,
+        stack: error.stack 
+      });
       return null;
     }
   }
@@ -193,7 +213,7 @@ class DuelManager {
                 i1.*, i2.*,
                 i1.id as image1_id, i1.s3_key as image1_s3_key, i1.elo as image1_elo,
                 i1.wins as image1_wins, i1.losses as image1_losses, i1.uploader_id as image1_uploader,
-                i1.current_streak as image1_streak,
+                i1.current_streak as image1_streak, i1.guild_id as guild_id,
                 i2.id as image2_id, i2.s3_key as image2_s3_key, i2.elo as image2_elo,
                 i2.wins as image2_wins, i2.losses as image2_losses, i2.uploader_id as image2_uploader,
                 i2.current_streak as image2_streak
@@ -214,6 +234,7 @@ class DuelManager {
         messageId: row.message_id,
         endsAt: row.ends_at,
         isWildcard: row.is_wildcard,
+        guildId: row.guild_id, // FIX: Include guild_id
         image1: {
           id: row.image1_id,
           s3_key: row.image1_s3_key,
@@ -221,7 +242,8 @@ class DuelManager {
           wins: row.image1_wins,
           losses: row.image1_losses,
           uploader_id: row.image1_uploader,
-          current_streak: row.image1_streak || 0
+          current_streak: row.image1_streak || 0,
+          guild_id: row.guild_id // FIX: Include guild_id
         },
         image2: {
           id: row.image2_id,
@@ -230,7 +252,8 @@ class DuelManager {
           wins: row.image2_wins,
           losses: row.image2_losses,
           uploader_id: row.image2_uploader,
-          current_streak: row.image2_streak || 0
+          current_streak: row.image2_streak || 0,
+          guild_id: row.guild_id // FIX: Include guild_id
         }
       };
     } catch (error) {
@@ -356,6 +379,10 @@ class DuelManager {
       if (image1Votes === 0 && image2Votes === 0) {
         // No votes - no winner
         console.log('⚠️  No votes cast, duel skipped');
+        await this.logAdminEvent(guildId, 'duel_skipped', { 
+          duelId: activeDuel.duelId,
+          reason: 'No votes cast' 
+        });
       } else if (image1Votes > image2Votes) {
         winner = activeDuel.image1;
         loser = activeDuel.image2;
@@ -369,6 +396,11 @@ class DuelManager {
       } else {
         // Tie - no winner
         console.log('⚠️  Tie vote, no winner');
+        await this.logAdminEvent(guildId, 'duel_skipped', { 
+          duelId: activeDuel.duelId,
+          reason: 'Tie vote',
+          votes: image1Votes 
+        });
       }
 
       // Update duel record
@@ -384,6 +416,7 @@ class DuelManager {
       // Calculate ELO if there's a winner and valid votes
       if (winner && !uploaderOnlyVoted && (winnerVotes + loserVotes) >= config.min_votes) {
         eloChanges = await this.updateEloAndStats(
+          guildId, // FIX: Pass guild_id as first parameter
           winner,
           loser,
           winnerVotes,
@@ -401,6 +434,15 @@ class DuelManager {
         await redis.del(`duel:${guildId}:votes`);
       }
 
+      await this.logAdminEvent(guildId, 'duel_ended', { 
+        duelId: activeDuel.duelId,
+        winnerId: winner?.id,
+        loserId: loser?.id,
+        winnerVotes,
+        loserVotes,
+        eloChanges 
+      });
+
       return {
         winner,
         loser,
@@ -411,6 +453,11 @@ class DuelManager {
       };
     } catch (error) {
       console.error('❌ Error ending duel:', error);
+      await this.logAdminEvent(guildId, 'duel_error', { 
+        error: 'Failed to end duel',
+        message: error.message,
+        stack: error.stack 
+      });
       return null;
     }
   }
@@ -437,6 +484,7 @@ class DuelManager {
 
   /**
    * Update ELO and stats after duel
+   * @param {string} guildId - Guild ID (FIX: Added parameter)
    * @param {Object} winner - Winner image object
    * @param {Object} loser - Loser image object
    * @param {number} winnerVotes - Number of votes for winner
@@ -445,7 +493,7 @@ class DuelManager {
    * @param {Object} config - Guild configuration
    * @returns {Promise<Object>}
    */
-  async updateEloAndStats(winner, loser, winnerVotes, loserVotes, isWildcard, config) {
+  async updateEloAndStats(guildId, winner, loser, winnerVotes, loserVotes, isWildcard, config) {
     // Ensure all values are valid numbers
     const winnerElo = parseInt(winner.elo) || 1000;
     const loserElo = parseInt(loser.elo) || 1000;
@@ -499,11 +547,11 @@ class DuelManager {
         [loser.id]
       );
       
-      await database.query(
-        `INSERT INTO logs (guild_id, action_type, details)
-         VALUES ($1, 'image_retired', $2)`,
-        [winner.guild_id, JSON.stringify({ imageId: loser.id, losses: newLosses })]
-      );
+      // FIX: Use guildId parameter instead of winner.guild_id
+      await this.logAdminEvent(guildId, 'image_retired', { 
+        imageId: loser.id,
+        losses: newLosses 
+      });
     }
 
     return {
@@ -511,6 +559,25 @@ class DuelManager {
       winnerNewElo,
       loserNewElo
     };
+  }
+
+  /**
+   * Log admin event for debugging
+   * @param {string} guildId - Guild ID
+   * @param {string} actionType - Action type
+   * @param {Object} details - Event details
+   */
+  async logAdminEvent(guildId, actionType, details) {
+    try {
+      await database.query(
+        `INSERT INTO logs (guild_id, action_type, details, created_at)
+         VALUES ($1, $2, $3, NOW())`,
+        [guildId, actionType, JSON.stringify(details)]
+      );
+    } catch (error) {
+      console.error('❌ Error logging admin event:', error);
+      // Don't throw - logging should never break the main flow
+    }
   }
 }
 
