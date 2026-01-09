@@ -26,19 +26,30 @@ const client = new Client({
 client.commands = new Collection();
 
 // Load commands dynamically
-const commands = [
-  (await import('./commands/setup.js')).default,
-  (await import('./commands/admin/admin.js')).default,
-  (await import('./commands/user/leaderboard.js')).default,
-  (await import('./commands/user/profile.js')).default,
-];
+async function loadCommands() {
+  const commandFiles = [
+    { path: './commands/setup.js', name: 'setup' },
+    { path: './commands/admin/admin.js', name: 'admin' },
+    { path: './commands/user/leaderboard.js', name: 'leaderboard' },
+    { path: './commands/user/profile.js', name: 'profile' },
+  ];
 
-for (const command of commands) {
-  if ('data' in command && 'execute' in command) {
-    client.commands.set(command.data.name, command);
-    console.log(`✅ Loaded command: ${command.data.name}`);
+  for (const file of commandFiles) {
+    try {
+      const command = (await import(file.path)).default;
+      if ('data' in command && 'execute' in command) {
+        client.commands.set(command.data.name, command);
+        console.log(`✅ Loaded command: ${command.data.name}`);
+      } else {
+        console.log(`⚠️ Command ${file.name} missing data or execute`);
+      }
+    } catch (error) {
+      console.error(`❌ Error loading command ${file.name}:`, error.message);
+    }
   }
 }
+
+await loadCommands();
 
 // Bot ready event
 client.once(Events.ClientReady, async (c) => {
@@ -47,6 +58,7 @@ client.once(Events.ClientReady, async (c) => {
   console.log('╚════════════════════════════════════╝');
   console.log(`📱 Logged in as ${c.user.tag}`);
   console.log(`🏠 Serving ${c.guilds.cache.size} guild(s)`);
+  console.log(`📋 Loaded ${client.commands.size} commands`);
   
   // Initialize database
   try {
