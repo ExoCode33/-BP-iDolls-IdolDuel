@@ -18,12 +18,37 @@ class S3Storage {
     this.bucketName = process.env.S3_BUCKET_NAME;
     this.endpoint = process.env.S3_ENDPOINT;
     
+    // URL cache: Map<s3Key, {url: string, expiresAt: number}>
+    this.urlCache = new Map();
+    
+    // Cache cleanup interval (every 30 minutes)
+    setInterval(() => this.cleanExpiredUrls(), 1800000);
+    
     // Log configuration on startup
     console.log('📦 S3 Storage Configuration:');
     console.log(`  Endpoint: ${this.endpoint}`);
     console.log(`  Bucket: ${this.bucketName}`);
     console.log(`  Region: ${process.env.S3_REGION || 'us-east-1'}`);
-    console.log(`  Using: Signed URLs (Railway S3)`);
+    console.log(`  Using: Signed URLs with caching (Railway S3)`);
+  }
+
+  /**
+   * Clean expired URLs from cache
+   */
+  cleanExpiredUrls() {
+    const now = Date.now();
+    let cleaned = 0;
+    
+    for (const [key, value] of this.urlCache.entries()) {
+      if (value.expiresAt <= now) {
+        this.urlCache.delete(key);
+        cleaned++;
+      }
+    }
+    
+    if (cleaned > 0) {
+      console.log(`🧹 Cleaned ${cleaned} expired URLs from cache`);
+    }
   }
 
   /**
@@ -51,7 +76,6 @@ class S3Storage {
           Key: s3Key,
           Body: buffer,
           ContentType: this.getContentType(extension),
-          // Railway S3 doesn't support ACL, remove it
         },
       });
 
@@ -68,9 +92,8 @@ class S3Storage {
   }
 
   /**
-   * Get signed URL for an image (required for Railway S3)
+   * Get signed URL for an image with caching (required for Railway S3)
    * @param {string} s3Key - S3 object key
-   * @param {number} expiresIn - URL expiration in seconds (default 24 hours)
    * @returns {Promise<string>} - Signed URL
    */
   async getImageUrl(s3Key) {
@@ -80,14 +103,26 @@ class S3Storage {
         return null;
       }
 
-      // Generate signed URL that expires in 24 hours
+      // Check cache first
+      const cached = this.urlCache.get(s3Key);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.url;
+      }
+
+      // Generate new signed URL (expires in 23 hours, cache expires 1 hour before that)
       const command = new GetObjectCommand({
         Bucket: this.bucketName,
         Key: s3Key,
       });
 
       const signedUrl = await getSignedUrl(this.client, command, { 
-        expiresIn: 86400 // 24 hours
+        expiresIn: 82800 // 23 hours
+      });
+      
+      // Cache the URL (expires 22 hours from now to be safe)
+      this.urlCache.set(s3Key, {
+        url: signedUrl,
+        expiresAt: Date.now() + 79200000 // 22 hours in milliseconds
       });
       
       return signedUrl;
@@ -96,6 +131,81 @@ class S3Storage {
       console.error('   S3 Key:', s3Key);
       return null;
     }
+  }
+
+  /**
+   * Batch get URLs for multiple images (more efficient)
+   * @param {Array<string>} s3Keys - Array of S3 keys
+   * @returns {Promise<Map<string, string>>} - Map of s3Key to URL
+   */
+  async getBatchImageUrls(s3Keys) {
+    const urlMap = new Map();
+    const keysToFetch = [];
+    
+    // Check cache first
+    for (const key of s3Keys) {
+      const cached = this.urlCache.get(key);
+      if (cached && cached.expiresAt > Date.now()) {
+        urlMap.set(key, cached.url);
+      } else {
+        keysToFetch.push(key);
+      }
+    }
+    
+    // Fetch remaining URLs in parallel
+    if (keysToFetch.length > 0) {
+      const promises = keysToFetch.map(async (key) => {
+        const url = await this.getImageUrl(key);
+        if (url) {
+          urlMap.set(key, url);
+        }
+      });
+      
+      await Promise.all(promises);
+    }
+    
+    return urlMap;
+  }
+
+  /**
+   * Invalidate cache for a specific key
+   * @param {string} s3Key - S3 object key
+   */
+  invalidateCache(s3Key) {
+    this.urlCache.delete(s3Key);
+  }
+
+  /**
+   * Clear entire URL cache
+   */
+  clearCache() {
+    const size = this.urlCache.size;
+    this.urlCache.clear();
+    console.log(`🧹 Cleared ${size} URLs from cache`);
+  }
+
+  /**
+   * Get cache statistics
+   * @returns {Object}
+   */
+  getCacheStats() {
+    const now = Date.now();
+    let validCount = 0;
+    let expiredCount = 0;
+    
+    for (const [_, value] of this.urlCache.entries()) {
+      if (value.expiresAt > now) {
+        validCount++;
+      } else {
+        expiredCount++;
+      }
+    }
+    
+    return {
+      total: this.urlCache.size,
+      valid: validCount,
+      expired: expiredCount
+    };
   }
 
   /**
@@ -111,6 +221,10 @@ class S3Storage {
       });
 
       await this.client.send(command);
+      
+      // Invalidate cache
+      this.invalidateCache(s3Key);
+      
       console.log(`✅ Image deleted from S3: ${s3Key}`);
       return true;
     } catch (error) {
@@ -209,8 +323,8 @@ class S3Storage {
         const firstObject = result.Contents[0];
         const testUrl = await this.getImageUrl(firstObject.Key);
         console.log(`   Sample object: ${firstObject.Key}`);
-        console.log(`   Sample signed URL generated`);
-        console.log('   ✅ Railway S3 requires signed URLs (this is normal)');
+        console.log(`   Sample signed URL generated and cached`);
+        console.log('   ✅ URL caching enabled for faster loading');
       }
       
       return true;
