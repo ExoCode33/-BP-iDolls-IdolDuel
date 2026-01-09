@@ -17,6 +17,25 @@ class EmbedUtils {
   }
 
   /**
+   * Get animated voting indicator based on time
+   * @returns {string}
+   */
+  getVotingAnimation() {
+    const animations = [
+      '⚡ Voting in Progress',
+      '💫 Voting in Progress',
+      '✨ Voting in Progress',
+      '⭐ Voting in Progress',
+      '🌟 Voting in Progress',
+      '💖 Voting in Progress'
+    ];
+    
+    // Cycle through animations based on current second
+    const index = Math.floor(Date.now() / 1000) % animations.length;
+    return animations[index];
+  }
+
+  /**
    * Create duel embeds - returns an array of 2 embeds (one per image)
    * @param {Object} duel - Duel data
    * @param {string} image1Url - Image 1 URL
@@ -26,41 +45,40 @@ class EmbedUtils {
    * @returns {EmbedBuilder[]} - Array of 2 embeds
    */
   createDuelEmbed(duel, image1Url, image2Url, endsAt, captions = { image1: [], image2: [] }) {
-    const timestamp = Math.floor(endsAt.getTime() / 1000);
+    const votingIndicator = this.getVotingAnimation();
     
     // Wildcard indicator
     const wildcardText = duel.isWildcard ? '  ⚡ **WILDCARD**' : '';
 
-    // Format captions for Image A
+    // Format captions for Image A (max 3)
     const captionsA = captions.image1.length > 0 
-      ? captions.image1.slice(0, 3).map(c => `*"${c}"*`).join('\n')
-      : '*No captions yet*';
+      ? '\n\n**💬 Captions:**\n' + captions.image1.slice(0, 3).map(c => `*"${c}"*`).join('\n')
+      : '';
 
-    // Format captions for Image B
+    // Format captions for Image B (max 3)
     const captionsB = captions.image2.length > 0 
-      ? captions.image2.slice(0, 3).map(c => `*"${c}"*`).join('\n')
-      : '*No captions yet*';
+      ? '\n\n**💬 Captions:**\n' + captions.image2.slice(0, 3).map(c => `*"${c}"*`).join('\n')
+      : '';
 
     // Image A embed - includes header
     const imageAEmbed = new EmbedBuilder()
       .setColor(PINK_COLOR)
-      .setAuthor({ name: 'iDolls Duel' })
+      .setTitle(`${votingIndicator}`)
       .setDescription(
-        `**Image A**${wildcardText}\n\n` +
-        `${eloService.getRankEmoji(duel.image1.elo)}  \`${duel.image1.elo}\` ELO\n\n` +
-        `${captionsA}`
+        `**━━━━━━━ Image A ━━━━━━━**${wildcardText}\n\n` +
+        `${eloService.getRankEmoji(duel.image1.elo)}  **ELO:** \`${duel.image1.elo}\`` +
+        captionsA
       )
       .setImage(image1Url)
-      .setFooter({ text: `⏱ Ends` })
-      .setTimestamp(endsAt);
+      .setFooter({ text: `Vote using buttons below! ♡` });
 
     // Image B embed
     const imageBEmbed = new EmbedBuilder()
       .setColor(PINK_COLOR)
       .setDescription(
-        `**Image B**\n\n` +
-        `${eloService.getRankEmoji(duel.image2.elo)}  \`${duel.image2.elo}\` ELO\n\n` +
-        `${captionsB}`
+        `**━━━━━━━ Image B ━━━━━━━**\n\n` +
+        `${eloService.getRankEmoji(duel.image2.elo)}  **ELO:** \`${duel.image2.elo}\`` +
+        captionsB
       )
       .setImage(image2Url)
       .setFooter({ text: `⏱ Duel ends` })
@@ -70,7 +88,7 @@ class EmbedUtils {
   }
 
   /**
-   * Create duel results embed
+   * Create duel results embed (shows percentages only, not vote counts)
    * @param {Object} results - Duel results
    * @param {string} winnerUrl - Winner image URL
    * @param {string} loserUrl - Loser image URL (optional)
@@ -80,10 +98,12 @@ class EmbedUtils {
     const embed = this.createBaseEmbed();
 
     if (results.skipped) {
-      embed.setTitle('`☆ Duel Skipped ☆`');
+      embed.setTitle('━━━━━━ ☆ Duel Skipped ☆ ━━━━━━');
       embed.setColor(0x808080);
       embed.setDescription(
-        `\`\`\`ansi\n\u001b[0;33m[ No votes were cast... (>﹏<) ]\u001b[0m\n\`\`\`\n` +
+        `\`\`\`\n` +
+        `  No votes were cast...\n` +
+        `\`\`\`\n` +
         `The duel ended with no winner!\n` +
         `Better luck next time! ♡`
       );
@@ -96,36 +116,40 @@ class EmbedUtils {
     const loserPercent = 100 - winnerPercent;
 
     const eloChange = results.eloChanges
-      ? ` *(+${results.eloChanges.winnerEloChange})*`
+      ? ` *+${results.eloChanges.winnerEloChange}*`
       : '';
 
     const eloLoss = results.eloChanges
-      ? ` *(${results.eloChanges.loserEloChange})*`
+      ? ` *${results.eloChanges.loserEloChange}*`
       : '';
 
-    // Create a visual vote bar
+    // Create visual percentage bars (20 chars wide)
     const barLength = 20;
     const winnerBars = Math.round((winnerPercent / 100) * barLength);
     const loserBars = barLength - winnerBars;
-    const voteBar = `\`${'█'.repeat(winnerBars)}${'░'.repeat(loserBars)}\``;
+    
+    // Use different characters for visual appeal
+    const winnerBar = `\`${'█'.repeat(winnerBars)}${'░'.repeat(loserBars)}\``;
+    const loserBar = `\`${'░'.repeat(winnerBars)}${'█'.repeat(loserBars)}\``;
 
-    embed.setTitle('`✨ Duel Results! ✨`');
+    embed.setTitle('━━━━━ ✨ Duel Results! ✨ ━━━━━');
     embed.setColor(0x00FF88);
     embed.setDescription(
-      `\`\`\`ansi\n\u001b[0;32m🎉 We have a winner! 🎉\u001b[0m\n\`\`\`\n` +
-      `**🏆 Winner** — ${winnerPercent}% (${results.winnerVotes} votes)\n` +
-      `${eloService.getRankEmoji(results.eloChanges?.winnerNewElo || results.winner.elo)} **New ELO:** \`${results.eloChanges?.winnerNewElo || results.winner.elo}\`${eloChange}\n\n` +
-      `${voteBar}\n\n` +
-      `**Runner-up** — ${loserPercent}% (${results.loserVotes} votes)\n` +
-      `${eloService.getRankEmoji(results.eloChanges?.loserNewElo || results.loser.elo)} **New ELO:** \`${results.eloChanges?.loserNewElo || results.loser.elo}\`${eloLoss}\n\n` +
-      `*Thanks for voting! ♡ >^u^<*`
+      `\`\`\`\n` +
+      `     🎉 We have a winner! 🎉\n` +
+      `\`\`\`\n\n` +
+      `**🏆 Winner — ${winnerPercent}%**\n` +
+      `${winnerBar}\n` +
+      `${eloService.getRankEmoji(results.eloChanges?.winnerNewElo || results.winner.elo)} **ELO:** \`${results.eloChanges?.winnerNewElo || results.winner.elo}\`${eloChange}\n\n` +
+      `━━━━━━━━━━━━━━━━━━━\n\n` +
+      `**Runner-up — ${loserPercent}%**\n` +
+      `${loserBar}\n` +
+      `${eloService.getRankEmoji(results.eloChanges?.loserNewElo || results.loser.elo)} **ELO:** \`${results.eloChanges?.loserNewElo || results.loser.elo}\`${eloLoss}\n\n` +
+      `*Thanks for voting! ♡*`
     );
 
     if (winnerUrl) {
-      embed.setImage(winnerUrl);
-    }
-    if (loserUrl) {
-      embed.setThumbnail(loserUrl);
+      embed.setThumbnail(winnerUrl);
     }
 
     embed.setFooter({ text: 'Next duel coming soon! ☆' });
@@ -146,9 +170,9 @@ class EmbedUtils {
     const winRate = eloService.calculateWinRate(topImage?.wins || 0, topImage?.losses || 0);
     const rankName = eloService.getRankName(user.elo);
 
-    embed.setTitle(`\`☆ ${rankName} Profile ☆\``);
+    embed.setTitle(`━━━━━ ${rankName} Profile ━━━━━`);
     embed.setDescription(
-      `\`\`\`ansi\n\u001b[0;36m[ User Stats ]\u001b[0m\n\`\`\`\n` +
+      `**User Stats**\n` +
       `${eloService.getRankEmoji(user.elo)} **ELO:** \`${user.elo}\`\n` +
       `🔥 **Current Streak:** ${user.current_streak}\n` +
       `⭐ **Best Streak:** ${user.best_streak}\n` +
@@ -156,6 +180,12 @@ class EmbedUtils {
     );
 
     if (topImage) {
+      embed.addFields({
+        name: '━━━━━━━━━━━━━━━━━━',
+        value: '** **',
+        inline: false
+      });
+      
       embed.addFields({
         name: '🏆 Top Image Stats',
         value:
@@ -185,9 +215,10 @@ class EmbedUtils {
   createLeaderboardEmbed(users, page = 1) {
     const embed = this.createBaseEmbed();
 
-    embed.setTitle('`🏆 IdolDuel Leaderboard 🏆`');
+    embed.setTitle('━━━━━ 🏆 Leaderboard 🏆 ━━━━━');
     embed.setDescription(
-      `\`\`\`ansi\n\u001b[0;36m+ Top ${users.length} Users by ELO\u001b[0m\n\`\`\`\n`
+      `**Top ${users.length} Users by ELO**\n` +
+      `━━━━━━━━━━━━━━━━━━━\n`
     );
 
     const medals = ['🥇', '🥈', '🥉'];
@@ -199,7 +230,7 @@ class EmbedUtils {
       
       embed.addFields({
         name: `${medal}<@${user.user_id}>`,
-        value: `${rankEmoji} ELO: \`${user.elo}\` ┃ Streak: ${user.current_streak} 🔥`,
+        value: `${rankEmoji} \`${user.elo}\` ELO  •  ${user.current_streak} 🔥 streak`,
         inline: false
       });
     });
@@ -225,50 +256,46 @@ class EmbedUtils {
 
     const winRate = eloService.calculateWinRate(image.wins, image.losses);
 
-    embed.setTitle(`\`${medal} Top Image — Rank ${position}\``);
+    embed.setTitle(`${medal} Top Image — Rank ${position}`);
     embed.setDescription(
-      `\`\`\`ansi\n\u001b[0;36m[ Image Stats ]\u001b[0m\n\`\`\`\n` +
+      `**Image Statistics**\n` +
+      `━━━━━━━━━━━━━━━━━━━\n` +
       `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
       `**Record:** ${image.wins}W - ${image.losses}L\n` +
       `**Win Rate:** ${winRate}%\n` +
       `**Current Streak:** ${image.current_streak} 🔥\n` +
       `**Best Streak:** ${image.best_streak} ⭐\n` +
       `**Total Votes:** ${image.total_votes_received}\n\n` +
-      `Uploaded by: <@${image.uploader_id}>`
+      `**Uploader:** <@${image.uploader_id}>`
     );
 
     embed.setImage(imageUrl);
-    embed.setFooter({ text: `Image ${position} of ${images.length} | Use buttons to navigate ♡` });
+    embed.setFooter({ text: `Image ${position} of ${images.length} | Navigate with buttons ♡` });
 
     return embed;
   }
 
   /**
-   * Create admin config embed
+   * Create admin config embed (more concise)
    * @param {Object} config - Guild configuration
    * @returns {EmbedBuilder}
    */
   createAdminConfigEmbed(config) {
     const embed = this.createBaseEmbed();
 
-    embed.setTitle('`⚙️ Admin Configuration Panel ⚙️`');
+    embed.setTitle('━━━━━ ⚙️ Admin Panel ⚙️ ━━━━━');
     embed.setDescription(
-      `\`\`\`ansi\n\u001b[0;36m[ Current Settings ]\u001b[0m\n\`\`\`\n` +
-      `**Duel Channel:** ${config.duel_channel_id ? `<#${config.duel_channel_id}>` : 'Not set'}\n` +
-      `**Duel Duration:** ${config.duel_duration / 60} minutes\n` +
-      `**Duel Interval:** ${config.duel_interval / 60} minutes\n` +
-      `**Starting ELO:** ${config.starting_elo}\n` +
-      `**K-Factor:** ${config.k_factor}\n` +
-      `**Min Votes:** ${config.min_votes}\n` +
-      `**Losses Before Retirement:** ${config.losses_before_retirement}\n` +
-      `**Max Active Images:** ${config.max_active_images}\n` +
-      `**Wildcard Chance:** ${(config.wildcard_chance * 100).toFixed(0)}%\n` +
-      `**Upset Bonus:** ${(config.upset_bonus * 100).toFixed(0)}%\n\n` +
-      `**Duel Status:** ${config.duel_active ? '✅ Active' : '❌ Inactive'}\n` +
-      `**Season:** ${config.season_number}`
+      `**Quick Settings Overview**\n` +
+      `━━━━━━━━━━━━━━━━━━━\n` +
+      `**Channel:** ${config.duel_channel_id ? `<#${config.duel_channel_id}>` : '❌ Not set'}\n` +
+      `**Duration:** ${config.duel_duration / 60}min  •  **Interval:** ${config.duel_interval / 60}min\n` +
+      `**Starting ELO:** ${config.starting_elo}  •  **K-Factor:** ${config.k_factor}\n` +
+      `**Min Votes:** ${config.min_votes}  •  **Retirement:** ${config.losses_before_retirement} losses\n` +
+      `**Status:** ${config.duel_active ? '✅ Active' : '❌ Inactive'}  •  **Season:** ${config.season_number}\n\n` +
+      `*Use dropdown below to configure*`
     );
 
-    embed.setFooter({ text: 'Use the dropdown below to navigate ♡' });
+    embed.setFooter({ text: 'Select a section to manage ♡' });
 
     return embed;
   }
@@ -282,10 +309,10 @@ class EmbedUtils {
     const embed = this.createBaseEmbed();
     embed.setColor(0xFF6B6B);
     
-    embed.setTitle('`❌ Oops! Something went wrong`');
+    embed.setTitle('━━━━━ ❌ Error ━━━━━');
     embed.setDescription(
-      `\`\`\`ansi\n\u001b[0;31m- ${message}\u001b[0m\n\`\`\`\n` +
-      `Please try again or contact an admin if the issue persists. (>﹏<)`
+      `${message}\n\n` +
+      `*Please try again or contact an admin if the issue persists.*`
     );
 
     return embed;
@@ -300,12 +327,42 @@ class EmbedUtils {
     const embed = this.createBaseEmbed();
     embed.setColor(0x00FF88);
     
-    embed.setTitle('`✅ Success!`');
-    embed.setDescription(
-      `\`\`\`ansi\n\u001b[0;32m+ ${message}\u001b[0m\n\`\`\`\n` +
-      `>^u^< ♡`
-    );
+    embed.setTitle('━━━━━ ✅ Success ━━━━━');
+    embed.setDescription(`${message}\n\n*>^u^< ♡*`);
 
+    return embed;
+  }
+
+  /**
+   * Create admin log embed for system events
+   * @param {Object} logEntry - Log entry data
+   * @returns {EmbedBuilder}
+   */
+  createAdminLogEmbed(logEntry) {
+    const embed = this.createBaseEmbed();
+    
+    const typeColors = {
+      'duel_started': 0x00FF88,
+      'duel_ended': 0x5865F2,
+      'duel_skipped': 0xFFAA00,
+      'duel_error': 0xFF6B6B,
+      'image_retired': 0xFF69B4,
+      'season_reset': 0xFF00FF,
+      'system_reset': 0xFF0000
+    };
+    
+    embed.setColor(typeColors[logEntry.action_type] || PINK_COLOR);
+    embed.setTitle(`📋 ${logEntry.action_type.replace(/_/g, ' ').toUpperCase()}`);
+    
+    const details = typeof logEntry.details === 'string' 
+      ? JSON.parse(logEntry.details) 
+      : logEntry.details;
+    
+    embed.setDescription(
+      `**Timestamp:** <t:${Math.floor(new Date(logEntry.created_at).getTime() / 1000)}:F>\n` +
+      `**Details:**\n\`\`\`json\n${JSON.stringify(details, null, 2)}\`\`\``
+    );
+    
     return embed;
   }
 }
