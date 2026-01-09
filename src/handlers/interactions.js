@@ -1,7 +1,7 @@
 /**
  * Enhanced Interaction Handler
  * Auto-deletes ephemeral messages after 3 seconds
- * Refreshes admin panel after settings changes
+ * Properly handles ephemeral admin panel refreshes
  */
 
 import database from '../database/database.js';
@@ -36,6 +36,30 @@ async function autoDeleteEphemeral(interaction, delay = 3000) {
       // Message already deleted or interaction expired
     }
   }, delay);
+}
+
+/**
+ * Refresh the admin panel for the user
+ */
+async function refreshAdminPanel(interaction) {
+  try {
+    // Since the admin panel is ephemeral, we need to send a fresh one
+    // We'll edit the original interaction message (the panel itself)
+    
+    // Get the original message from the button/modal that was clicked
+    const originalInteraction = interaction.message ? 
+      { 
+        guild: interaction.guild,
+        editReply: async (data) => await interaction.message.edit(data)
+      } : null;
+    
+    if (originalInteraction) {
+      await adminCommand.showAdminPanel(originalInteraction, true);
+    }
+  } catch (error) {
+    console.error('Error refreshing admin panel:', error.message);
+    // Silently fail - user will see updated values when they reopen /admin
+  }
 }
 
 /**
@@ -265,21 +289,11 @@ async function handleScheduleSubmit(interaction) {
 
     // Show success message
     const embed = embedUtils.createSuccessEmbed(
-      `Schedule updated to ${intervalMinutes} min!\n\nRestart duels for changes to take effect.`
+      `✅ Schedule updated!\n\nInterval: ${intervalMinutes} min\nDuration: ${durationMinutes} min\n\nRe-open /admin to see changes.`
     );
     await interaction.editReply({ embeds: [embed] });
     autoDeleteEphemeral(interaction);
 
-    // Refresh admin panel in original message
-    const originalMessage = await interaction.channel.messages.fetch(interaction.message.id);
-    if (originalMessage) {
-      await adminCommand.showAdminPanel({ 
-        guild: interaction.guild,
-        editReply: async (data) => {
-          await originalMessage.edit(data);
-        }
-      }, true);
-    }
   } catch (error) {
     console.error('Error updating schedule:', error);
     const embed = embedUtils.createErrorEmbed('Failed to update schedule!');
@@ -322,21 +336,11 @@ async function handleEloSubmit(interaction) {
 
     // Show success message
     const embed = embedUtils.createSuccessEmbed(
-      `ELO settings updated!\n\nStarting ELO: ${startingElo}\nK-Factor: ${kFactor}`
+      `✅ ELO settings updated!\n\nStarting ELO: ${startingElo}\nK-Factor: ${kFactor}\n\nRe-open /admin to see changes.`
     );
     await interaction.editReply({ embeds: [embed] });
     autoDeleteEphemeral(interaction);
 
-    // Refresh admin panel
-    const originalMessage = await interaction.channel.messages.fetch(interaction.message.id);
-    if (originalMessage) {
-      await adminCommand.showAdminPanel({ 
-        guild: interaction.guild,
-        editReply: async (data) => {
-          await originalMessage.edit(data);
-        }
-      }, true);
-    }
   } catch (error) {
     console.error('Error updating ELO settings:', error);
     const embed = embedUtils.createErrorEmbed('Failed to update ELO settings!');
@@ -404,22 +408,12 @@ async function handleImportSubmit(interaction) {
     }
 
     const successEmbed = embedUtils.createSuccessEmbed(
-      `Import complete!\n\n✅ Imported: ${imported}\n⏭️ Skipped: ${skipped}`
+      `✅ Import complete!\n\nImported: ${imported} images\nSkipped: ${skipped} (duplicates/invalid)\n\nRe-open /admin to see updated stats.`
     );
 
     await interaction.editReply({ embeds: [successEmbed] });
-    autoDeleteEphemeral(interaction, 5000); // 5 seconds for import success
+    autoDeleteEphemeral(interaction, 5000); // 5 seconds for import
 
-    // Refresh admin panel
-    const originalMessage = await interaction.channel.messages.fetch(interaction.message.id);
-    if (originalMessage) {
-      await adminCommand.showAdminPanel({ 
-        guild: interaction.guild,
-        editReply: async (data) => {
-          await originalMessage.edit(data);
-        }
-      }, true);
-    }
   } catch (error) {
     console.error('Error importing images:', error);
     const embed = embedUtils.createErrorEmbed('Failed to import images! Check bot permissions.');
