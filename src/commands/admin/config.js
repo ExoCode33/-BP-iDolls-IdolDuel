@@ -98,6 +98,11 @@ export default {
               value: 'season_management',
             },
             {
+              label: '📋 Admin Logs',
+              description: 'View system events and errors',
+              value: 'admin_logs',
+            },
+            {
               label: '⚠️ System Reset',
               description: 'Complete system wipe and restart (requires password)',
               value: 'system_reset',
@@ -118,26 +123,41 @@ export default {
       `[ Channel & Timing Configuration ]\n` +
       `\`\`\`\n` +
       `**Duel Channel:** ${config.duel_channel_id ? `<#${config.duel_channel_id}>` : 'Not set'}\n` +
+      `**Log Channel:** ${config.log_channel_id ? `<#${config.log_channel_id}>` : 'Not set (logs disabled)'}\n` +
       `**Duel Duration:** ${config.duel_duration / 60} minutes\n` +
       `**Duel Interval:** ${config.duel_interval / 60} minutes\n` +
       `**Max Active Images:** ${config.max_active_images}\n\n` +
+      `*Log channel receives notifications about duel starts, ends, errors, and image retirements.*\n\n` +
       `Use the buttons below to modify these settings ♡`
     );
 
-    const buttons = new ActionRowBuilder()
+    const buttons1 = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_set_duel_channel')
           .setLabel('Set Duel Channel')
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
+          .setCustomId('admin_set_log_channel')
+          .setLabel('Set Log Channel')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('admin_clear_log_channel')
+          .setLabel('Disable Logs')
+          .setStyle(ButtonStyle.Danger)
+          .setDisabled(!config.log_channel_id)
+      );
+
+    const buttons2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
           .setCustomId('admin_set_duel_duration')
           .setLabel('Set Duel Duration')
-          .setStyle(ButtonStyle.Primary),
+          .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('admin_set_duel_interval')
           .setLabel('Set Duel Interval')
-          .setStyle(ButtonStyle.Primary)
+          .setStyle(ButtonStyle.Secondary)
       );
 
     const backButton = new ActionRowBuilder()
@@ -148,7 +168,7 @@ export default {
           .setStyle(ButtonStyle.Secondary)
       );
 
-    await interaction.editReply({ embeds: [embed], components: [buttons, backButton] });
+    await interaction.editReply({ embeds: [embed], components: [buttons1, buttons2, backButton] });
   },
 
   async handleEloSettings(interaction, config) {
@@ -270,67 +290,6 @@ export default {
       );
 
     await interaction.editReply({ embeds: [embed], components: [buttons, buttons2, backButton] });
-  },
-
-  async handleImageManagement(interaction, config) {
-    // Only defer if not already replied/deferred
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.deferUpdate();
-    }
-
-    const guildId = interaction.guild.id;
-
-    // Get image statistics
-    const stats = await database.query(
-      `SELECT 
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE retired = false) as active,
-        COUNT(*) FILTER (WHERE retired = true) as retired
-       FROM images
-       WHERE guild_id = $1`,
-      [guildId]
-    );
-
-    const { total, active, retired } = stats.rows[0];
-
-    const embed = embedUtils.createBaseEmbed();
-    embed.setTitle('🖼️ Image Management');
-    embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Image Statistics ]\n` +
-      `\`\`\`\n` +
-      `**Total Images:** ${total}\n` +
-      `**Active Images:** ${active}\n` +
-      `**Retired Images:** ${retired}\n` +
-      `**Max Active Images:** ${config.max_active_images}\n\n` +
-      `Use the buttons below to manage images ♡`
-    );
-
-    const buttons = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('admin_import_images')
-          .setLabel('📥 Import Images')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId('admin_list_images')
-          .setLabel('📋 List Active Images')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('admin_clear_low_elo')
-          .setLabel('🗑️ Clear Low ELO Images')
-          .setStyle(ButtonStyle.Danger)
-      );
-
-    const backButton = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('admin_back_main')
-          .setLabel('◀ Back to Main Menu')
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-    await interaction.editReply({ embeds: [embed], components: [buttons, backButton] });
   },
 
   async handleSeasonManagement(interaction, config) {
@@ -560,6 +519,23 @@ export default {
     const input = new TextInputBuilder()
       .setCustomId('duel_channel_input')
       .setLabel('Channel ID')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('123456789')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return modal;
+  },
+
+  // NEW: Log channel modal
+  createLogChannelModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_log_channel')
+      .setTitle('Set Log Channel');
+
+    const input = new TextInputBuilder()
+      .setCustomId('log_channel_input')
+      .setLabel('Channel ID for admin logs')
       .setStyle(TextInputStyle.Short)
       .setPlaceholder('123456789')
       .setRequired(true);
