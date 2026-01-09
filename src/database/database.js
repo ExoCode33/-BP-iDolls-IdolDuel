@@ -11,7 +11,9 @@ class Database {
 
   async initialize() {
     try {
+      // First ensure tables exist (without log channel index)
       await this.createTables();
+      // Then run migrations to add missing columns to existing installations
       await this.runMigrations();
       console.log('✅ Database initialized successfully');
     } catch (error) {
@@ -165,7 +167,6 @@ class Database {
         CREATE INDEX IF NOT EXISTS idx_users_guild ON users(guild_id, user_id);
         CREATE INDEX IF NOT EXISTS idx_duels_guild ON duels(guild_id, ended_at DESC);
         CREATE INDEX IF NOT EXISTS idx_votes_duel ON votes(duel_id, user_id);
-        CREATE INDEX IF NOT EXISTS idx_guild_config_log_channel ON guild_config(log_channel_id) WHERE log_channel_id IS NOT NULL;
       `);
 
       await client.query('COMMIT');
@@ -183,15 +184,33 @@ class Database {
       console.log('🔄 Running database migrations...');
 
       // Migration: Add log_channel_id if it doesn't exist (for existing databases)
-      await client.query(`
-        ALTER TABLE guild_config 
-        ADD COLUMN IF NOT EXISTS log_channel_id VARCHAR(20)
-      `);
+      // This will do nothing if column already exists (from fresh install)
+      try {
+        await client.query(`
+          ALTER TABLE guild_config 
+          ADD COLUMN IF NOT EXISTS log_channel_id VARCHAR(20)
+        `);
+        console.log('✅ Added log_channel_id column (if needed)');
+      } catch (err) {
+        console.log('ℹ️  log_channel_id column already exists or table not ready');
+      }
+
+      // Add index for log_channel_id (safe to run multiple times)
+      try {
+        await client.query(`
+          CREATE INDEX IF NOT EXISTS idx_guild_config_log_channel 
+          ON guild_config(log_channel_id) 
+          WHERE log_channel_id IS NOT NULL
+        `);
+        console.log('✅ Created log_channel_id index');
+      } catch (err) {
+        console.log('ℹ️  log_channel_id index already exists');
+      }
 
       console.log('✅ Migrations completed successfully');
     } catch (error) {
-      console.error('❌ Migration failed:', error);
-      // Don't throw - migrations might fail if already applied
+      console.error('⚠️  Migration error:', error.message);
+      // Don't throw - migrations might fail if table doesn't exist yet
     } finally {
       client.release();
     }
