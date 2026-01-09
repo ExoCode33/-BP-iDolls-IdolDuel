@@ -14,9 +14,9 @@ import {
   TextInputStyle,
   MessageFlags
 } from 'discord.js';
-import database from '../database/database.js';
-import embedUtils from '../utils/embeds.js';
-import retirement from '../services/image/retirement.js';
+import database from '../../database/database.js';
+import embedUtils from '../../utils/embeds.js';
+import retirement from '../../services/image/retirement.js';
 
 export default {
   data: new SlashCommandBuilder()
