@@ -580,5 +580,21 @@ export default {
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
+  },
+
+  /**
+   * Execute function for slash command
+   */
+  async execute(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+      const config = await this.getOrCreateConfig(interaction.guild.id);
+      await this.showMainMenu(interaction, config);
+    } catch (error) {
+      console.error('Error executing config command:', error);
+      const errorEmbed = embedUtils.createErrorEmbed('Failed to load admin panel.');
+      await interaction.editReply({ embeds: [errorEmbed] });
+    }
   }
 };
