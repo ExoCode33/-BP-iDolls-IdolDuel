@@ -265,7 +265,68 @@ export async function handleButtonInteraction(interaction) {
     return;
   }
 
-  // Admin buttons - advanced settings
+  // NEW: Quick setup navigation
+  if (customId === 'admin_set_schedule_preset') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.showSchedulePresets(interaction, config);
+    return;
+  }
+
+  if (customId === 'admin_set_import_channel') {
+    await interaction.showModal(adminConfig.createImportChannelsModal());
+    return;
+  }
+
+  // NEW: Smart retirement
+  if (customId === 'retirement_enable_smart') {
+    await interaction.deferUpdate();
+    
+    await database.query(
+      'UPDATE guild_config SET losses_before_retirement = NULL WHERE guild_id = $1',
+      [interaction.guild.id]
+    );
+    
+    const successEmbed = embedUtils.createSuccessEmbed('Smart retirement enabled!');
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+    
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.showRetirementSettings(interaction, config);
+    return;
+  }
+
+  if (customId === 'retirement_set_manual') {
+    await interaction.showModal(adminConfig.createLossesRetirementModal());
+    return;
+  }
+
+  // NEW: Auto-approve toggle
+  if (customId === 'import_toggle_auto_approve') {
+    await interaction.deferUpdate();
+    
+    const result = await database.query(
+      'SELECT auto_approve_images FROM guild_config WHERE guild_id = $1',
+      [interaction.guild.id]
+    );
+    
+    const currentValue = result.rows[0].auto_approve_images;
+    
+    await database.query(
+      'UPDATE guild_config SET auto_approve_images = $1 WHERE guild_id = $2',
+      [!currentValue, interaction.guild.id]
+    );
+    
+    const successEmbed = embedUtils.createSuccessEmbed(
+      `Auto-approve ${!currentValue ? 'enabled' : 'disabled'}!`
+    );
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+    
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.showImportSettings(interaction, config);
+    return;
+  }
+
+  // Admin buttons - advanced settings (keeping for compatibility)
   if (customId === 'admin_basic_settings') {
     await interaction.deferUpdate();
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
