@@ -1,7 +1,6 @@
 /**
- * Deploy Commands Script
- * Registers slash commands with Discord
- * Automatically removes old commands
+ * Force Clean Deploy Script
+ * Removes ALL existing commands, then deploys new ones
  */
 
 import { REST, Routes } from 'discord.js';
@@ -60,51 +59,40 @@ const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 (async () => {
   try {
     console.log('╔════════════════════════════════════╗');
-    console.log('║   Command Deployment Started       ║');
+    console.log('║   FORCE CLEAN DEPLOYMENT           ║');
     console.log('╚════════════════════════════════════╝');
     console.log('');
 
-    // Step 1: Get existing commands
-    console.log('🔍 Checking for existing commands...');
-    const existingCommands = await rest.get(
-      Routes.applicationCommands(process.env.DISCORD_CLIENT_ID)
-    );
-
-    console.log(`   Found ${existingCommands.length} existing command(s)`);
-
-    // Step 2: Identify commands to remove
-    const commandsToRemove = existingCommands.filter(cmd => {
-      const isNewCommand = commands.some(newCmd => newCmd.name === cmd.name);
-      return !isNewCommand;
-    });
-
-    if (commandsToRemove.length > 0) {
-      console.log('');
-      console.log('🗑️  Removing old commands:');
-      for (const cmd of commandsToRemove) {
-        console.log(`   ❌ /${cmd.name}`);
-        await rest.delete(
-          Routes.applicationCommand(process.env.DISCORD_CLIENT_ID, cmd.id)
-        );
-      }
-      console.log(`   ✅ Removed ${commandsToRemove.length} old command(s)`);
-    } else {
-      console.log('   ✅ No old commands to remove');
+    // Step 1: DELETE ALL existing commands
+    console.log('🗑️  Deleting ALL existing commands...');
+    
+    try {
+      await rest.put(
+        Routes.applicationCommands(process.env.DISCORD_CLIENT_ID),
+        { body: [] } // Empty array = delete all
+      );
+      console.log('   ✅ All old commands deleted!');
+    } catch (error) {
+      console.log('   ⚠️  No commands to delete (or error)');
     }
 
-    // Step 3: Deploy new commands
     console.log('');
-    console.log(`🔄 Deploying ${commands.length} new command(s)...`);
+    console.log('⏳ Waiting 2 seconds for Discord to sync...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Step 2: Deploy new commands
+    console.log('');
+    console.log(`🔄 Deploying ${commands.length} NEW commands...`);
 
     const data = await rest.put(
       Routes.applicationCommands(process.env.DISCORD_CLIENT_ID),
-      { body: commands },
+      { body: commands }
     );
 
     console.log('');
     console.log('✅ Successfully deployed commands!');
     console.log('');
-    console.log('📋 Registered commands:');
+    console.log('📋 New commands registered:');
     data.forEach(cmd => console.log(`   ✅ /${cmd.name}`));
     
     console.log('');
@@ -112,10 +100,11 @@ const rest = new REST().setToken(process.env.DISCORD_TOKEN);
     console.log('║   Deployment Complete! ♡           ║');
     console.log('╚════════════════════════════════════╝');
     console.log('');
-    console.log('🎉 Your bot is ready to use!');
-    console.log('💡 Restart your bot to load the new commands.');
+    console.log('🎉 All old commands removed!');
+    console.log('💡 Restart Discord app to see changes immediately');
+    console.log('⏱️  Or wait 1-2 minutes for Discord to sync');
     console.log('');
   } catch (error) {
-    console.error('❌ Error deploying commands:', error);
+    console.error('❌ Error during deployment:', error);
   }
 })();
