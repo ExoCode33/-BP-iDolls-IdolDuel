@@ -1,8 +1,13 @@
+import { SlashCommandBuilder } from 'discord.js';
 import database from '../../database/database.js';
 import storage from '../../services/image/storage.js';
 import embedUtils from '../../utils/embeds.js';
 
 export default {
+  data: new SlashCommandBuilder()
+    .setName('profile')
+    .setDescription('View your profile and stats'),
+
   async execute(interaction) {
     await interaction.deferReply();
 
