@@ -1,5 +1,14 @@
-import pkg from 'pg';
-const { Pool } = pkg;
+/**
+ * Database Connection and Schema
+ * PostgreSQL with retirement settings support
+ */
+
+import pg from 'pg';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const { Pool } = pg;
 
 class Database {
   constructor() {
@@ -10,107 +19,120 @@ class Database {
   }
 
   async query(text, params) {
-    const client = await this.pool.connect();
-    try {
-      return await client.query(text, params);
-    } finally {
-      client.release();
+    const start = Date.now();
+    const res = await this.pool.query(text, params);
+    const duration = Date.now() - start;
+    
+    if (duration > 100) {
+      console.log('Slow query:', { text, duration, rows: res.rowCount });
     }
+    
+    return res;
   }
 
-  async createTables() {
+  async initialize() {
     try {
-      // Guild configuration
+      // Create guild_config table with retirement settings
       await this.query(`
         CREATE TABLE IF NOT EXISTS guild_config (
-          guild_id VARCHAR(20) PRIMARY KEY,
-          duel_channel_id VARCHAR(20),
-          image_channel_id VARCHAR(20),
-          duel_duration INTEGER DEFAULT 43200,
-          duel_interval INTEGER DEFAULT 43200,
-          starting_elo INTEGER DEFAULT 1000,
-          k_factor INTEGER DEFAULT 32,
+          guild_id TEXT PRIMARY KEY,
+          image_channel_id TEXT,
+          duel_channel_id TEXT,
           duel_active BOOLEAN DEFAULT false,
           duel_paused BOOLEAN DEFAULT false,
+          duel_interval INTEGER DEFAULT 21600,
+          duel_duration INTEGER DEFAULT 21600,
+          starting_elo INTEGER DEFAULT 1000,
+          k_factor INTEGER DEFAULT 32,
           season_number INTEGER DEFAULT 1,
+          retire_after_losses INTEGER DEFAULT 0,
+          retire_below_elo INTEGER DEFAULT 0,
           created_at TIMESTAMP DEFAULT NOW()
         )
       `);
 
-      // Images
+      // Create images table
       await this.query(`
         CREATE TABLE IF NOT EXISTS images (
           id SERIAL PRIMARY KEY,
-          guild_id VARCHAR(20) NOT NULL,
+          guild_id TEXT NOT NULL,
           s3_key TEXT NOT NULL UNIQUE,
+          uploader_id TEXT NOT NULL,
           elo INTEGER DEFAULT 1000,
           wins INTEGER DEFAULT 0,
           losses INTEGER DEFAULT 0,
           retired BOOLEAN DEFAULT false,
           retired_at TIMESTAMP,
-          uploader_id VARCHAR(20),
           imported_at TIMESTAMP DEFAULT NOW(),
           last_duel_at TIMESTAMP
         )
       `);
 
-      // Duels
+      // Create duels table
       await this.query(`
         CREATE TABLE IF NOT EXISTS duels (
           id SERIAL PRIMARY KEY,
-          guild_id VARCHAR(20) NOT NULL,
-          image1_id INTEGER REFERENCES images(id) ON DELETE SET NULL,
-          image2_id INTEGER REFERENCES images(id) ON DELETE SET NULL,
+          guild_id TEXT NOT NULL,
+          image1_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
+          image2_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
           winner_id INTEGER REFERENCES images(id) ON DELETE SET NULL,
+          image1_votes INTEGER DEFAULT 0,
+          image2_votes INTEGER DEFAULT 0,
           started_at TIMESTAMP DEFAULT NOW(),
           ended_at TIMESTAMP
         )
       `);
 
-      // Active duels
-      await this.query(`
-        CREATE TABLE IF NOT EXISTS active_duels (
-          guild_id VARCHAR(20) PRIMARY KEY,
-          duel_id INTEGER REFERENCES duels(id) ON DELETE CASCADE,
-          image1_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
-          image2_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
-          message_id VARCHAR(20),
-          ends_at TIMESTAMP NOT NULL
-        )
-      `);
-
-      // Votes
+      // Create votes table
       await this.query(`
         CREATE TABLE IF NOT EXISTS votes (
           id SERIAL PRIMARY KEY,
           duel_id INTEGER REFERENCES duels(id) ON DELETE CASCADE,
-          user_id VARCHAR(20) NOT NULL,
+          user_id TEXT NOT NULL,
           image_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
           voted_at TIMESTAMP DEFAULT NOW(),
           UNIQUE(duel_id, user_id)
         )
       `);
 
+      // Create active_duels table
+      await this.query(`
+        CREATE TABLE IF NOT EXISTS active_duels (
+          guild_id TEXT PRIMARY KEY,
+          duel_id INTEGER REFERENCES duels(id) ON DELETE CASCADE,
+          message_id TEXT,
+          ends_at TIMESTAMP NOT NULL,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+
       // Create indexes
-      await this.query('CREATE INDEX IF NOT EXISTS idx_images_guild ON images(guild_id)');
-      await this.query('CREATE INDEX IF NOT EXISTS idx_images_elo ON images(guild_id, elo DESC)');
-      await this.query('CREATE INDEX IF NOT EXISTS idx_images_retired ON images(guild_id, retired)');
-      await this.query('CREATE INDEX IF NOT EXISTS idx_duels_guild ON duels(guild_id)');
-      await this.query('CREATE INDEX IF NOT EXISTS idx_votes_duel ON votes(duel_id)');
+      await this.query('CREATE INDEX IF NOT EXISTS idx_images_guild_id ON images(guild_id)');
+      await this.query('CREATE INDEX IF NOT EXISTS idx_images_elo ON images(elo DESC)');
+      await this.query('CREATE INDEX IF NOT EXISTS idx_images_retired ON images(retired)');
+      await this.query('CREATE INDEX IF NOT EXISTS idx_duels_guild_id ON duels(guild_id)');
+      await this.query('CREATE INDEX IF NOT EXISTS idx_votes_duel_id ON votes(duel_id)');
+      await this.query('CREATE INDEX IF NOT EXISTS idx_active_duels_guild_id ON active_duels(guild_id)');
+
+      // Add columns to existing guild_config if they don't exist (migration)
+      await this.query(`
+        DO $$ 
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='guild_config' AND column_name='retire_after_losses') THEN
+            ALTER TABLE guild_config ADD COLUMN retire_after_losses INTEGER DEFAULT 0;
+          END IF;
+          
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='guild_config' AND column_name='retire_below_elo') THEN
+            ALTER TABLE guild_config ADD COLUMN retire_below_elo INTEGER DEFAULT 0;
+          END IF;
+        END $$;
+      `);
 
       console.log('✅ Database tables created successfully');
     } catch (error) {
-      console.error('❌ Error creating tables:', error);
-      throw error;
-    }
-  }
-
-  async initialize() {
-    try {
-      await this.createTables();
-      console.log('✅ Database initialized successfully');
-    } catch (error) {
-      console.error('❌ Database initialization failed:', error);
+      console.error('❌ Database initialization error:', error);
       throw error;
     }
   }
@@ -121,4 +143,9 @@ class Database {
 }
 
 const database = new Database();
+
+// Initialize on startup
+await database.initialize();
+console.log('✅ Database initialized successfully');
+
 export default database;
