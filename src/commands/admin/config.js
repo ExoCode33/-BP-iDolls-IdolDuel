@@ -1,137 +1,169 @@
 import { 
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  ButtonBuilder,
+  EmbedBuilder, 
+  ActionRowBuilder, 
+  ButtonBuilder, 
   ButtonStyle,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle,
-  MessageFlags
+  TextInputStyle
 } from 'discord.js';
 import database from '../../database/database.js';
 import embedUtils from '../../utils/embeds.js';
-import storage from '../../services/storage.js';
 
 export default {
-  async execute(interaction) {
-    // Check if user has admin role
-    if (!this.isAdmin(interaction)) {
-      const errorEmbed = embedUtils.createErrorEmbed('You need the admin role to use this command!');
-      await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-      return;
-    }
-
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    try {
-      const guildId = interaction.guild.id;
-
-      // Get or create guild config
-      let config = await this.getOrCreateConfig(guildId);
-
-      await this.showMainMenu(interaction, config);
-    } catch (error) {
-      console.error('Error in admin command:', error);
-      const errorEmbed = embedUtils.createErrorEmbed('Failed to load admin panel. Please try again!');
-      await interaction.editReply({ embeds: [errorEmbed] });
-    }
-  },
-
-  isAdmin(interaction) {
-    const adminRoleId = process.env.ADMIN_ROLE_ID;
-    return interaction.member.roles.cache.has(adminRoleId);
-  },
-
+  /**
+   * Get or create guild configuration
+   */
   async getOrCreateConfig(guildId) {
-    let result = await database.query(
+    const result = await database.query(
       'SELECT * FROM guild_config WHERE guild_id = $1',
       [guildId]
     );
 
-    if (result.rows.length === 0) {
-      await database.query(
-        'INSERT INTO guild_config (guild_id) VALUES ($1)',
-        [guildId]
+    if (result.rows.length > 0) {
+      return result.rows[0];
+    }
+
+    // Create default config
+    await database.query(
+      `INSERT INTO guild_config (guild_id) VALUES ($1)`,
+      [guildId]
+    );
+
+    const newResult = await database.query(
+      'SELECT * FROM guild_config WHERE guild_id = $1',
+      [guildId]
+    );
+
+    return newResult.rows[0];
+  },
+
+  /**
+   * Show main admin menu
+   */
+  async showMainMenu(interaction, config) {
+    const embed = embedUtils.createBaseEmbed();
+    embed.setTitle('⚙️ IdolDuel Admin Panel');
+    embed.setDescription(
+      `**Server:** ${interaction.guild.name}\n` +
+      `**Status:** ${config.duel_active ? (config.duel_paused ? '⏸️ Paused' : '✅ Active') : '❌ Stopped'}\n` +
+      `**Season:** ${config.season_number}\n\n` +
+      `Select a category below to configure your duel system ♡`
+    );
+
+    // Main menu buttons
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_basic_settings')
+          .setLabel('Basic Settings')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('⚙️'),
+        new ButtonBuilder()
+          .setCustomId('admin_elo_settings')
+          .setLabel('ELO Settings')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('📊'),
+        new ButtonBuilder()
+          .setCustomId('admin_retirement_settings')
+          .setLabel('Retirement')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('🗑️')
       );
 
-      result = await database.query(
-        'SELECT * FROM guild_config WHERE guild_id = $1',
-        [guildId]
+    const row2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_image_management')
+          .setLabel('Image Management')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('🖼️'),
+        new ButtonBuilder()
+          .setCustomId('admin_import_settings')
+          .setLabel('Import Settings')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('📥'),
+        new ButtonBuilder()
+          .setCustomId('admin_view_logs')
+          .setLabel('View Logs')
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('📋')
+      );
+
+    // Duel control buttons
+    const row3 = new ActionRowBuilder();
+    
+    if (!config.duel_active) {
+      row3.addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_start_duel')
+          .setLabel('Start Duel System')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('▶️')
+      );
+    } else if (config.duel_paused) {
+      row3.addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_resume_duel')
+          .setLabel('Resume Duel')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('▶️'),
+        new ButtonBuilder()
+          .setCustomId('admin_stop_duel')
+          .setLabel('Stop Duel System')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('⏹️')
+      );
+    } else {
+      row3.addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_pause_duel')
+          .setLabel('Pause Duel')
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('⏸️'),
+        new ButtonBuilder()
+          .setCustomId('admin_skip_duel')
+          .setLabel('Skip Current Duel')
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('⏭️'),
+        new ButtonBuilder()
+          .setCustomId('admin_stop_duel')
+          .setLabel('Stop Duel System')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('⏹️')
       );
     }
 
-    return result.rows[0];
-  },
-
-  async showMainMenu(interaction, config) {
-    const embed = embedUtils.createAdminConfigEmbed(config);
-
-    const dropdown = new ActionRowBuilder()
+    const row4 = new ActionRowBuilder()
       .addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('admin_menu')
-          .setPlaceholder('Select a section to manage')
-          .addOptions([
-            {
-              label: '⚙️ Basic Settings',
-              description: 'Configure channels and duel timing',
-              value: 'basic_settings',
-            },
-            {
-              label: '🎮 ELO Settings',
-              description: 'Configure ELO calculation parameters',
-              value: 'elo_settings',
-            },
-            {
-              label: '🎲 Duel Controls',
-              description: 'Start, stop, pause, or skip duels',
-              value: 'duel_controls',
-            },
-            {
-              label: '🖼️ Image Management',
-              description: 'Import, list, and manage images',
-              value: 'image_management',
-            },
-            {
-              label: '🔄 Season Management',
-              description: 'Reset season and manage archives',
-              value: 'season_management',
-            },
-            {
-              label: '📋 Admin Logs',
-              description: 'View system events and errors',
-              value: 'admin_logs',
-            },
-            {
-              label: '⚠️ System Reset',
-              description: 'Complete system wipe and restart (requires password)',
-              value: 'system_reset',
-            },
-          ])
+        new ButtonBuilder()
+          .setCustomId('admin_dangerous_actions')
+          .setLabel('⚠️ Dangerous Actions')
+          .setStyle(ButtonStyle.Danger)
       );
 
-    await interaction.editReply({ embeds: [embed], components: [dropdown] });
+    await interaction.editReply({
+      embeds: [embed],
+      components: [row1, row2, row3, row4]
+    });
   },
 
+  /**
+   * Show basic settings
+   */
   async handleBasicSettings(interaction, config) {
-    await interaction.deferUpdate();
-
     const embed = embedUtils.createBaseEmbed();
     embed.setTitle('⚙️ Basic Settings');
     embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Channel & Timing Configuration ]\n` +
-      `\`\`\`\n` +
       `**Duel Channel:** ${config.duel_channel_id ? `<#${config.duel_channel_id}>` : 'Not set'}\n` +
-      `**Log Channel:** ${config.log_channel_id ? `<#${config.log_channel_id}>` : 'Not set (logs disabled)'}\n` +
-      `**Duel Duration:** ${config.duel_duration / 60} minutes\n` +
-      `**Duel Interval:** ${config.duel_interval / 60} minutes\n` +
-      `**Max Active Images:** ${config.max_active_images}\n\n` +
-      `*Log channel receives notifications about duel starts, ends, errors, and image retirements.*\n\n` +
-      `Use the buttons below to modify these settings ♡`
+      `**Log Channel:** ${config.log_channel_id ? `<#${config.log_channel_id}>` : 'Not set'}\n` +
+      `**Duel Duration:** ${config.duel_duration} seconds (${Math.floor(config.duel_duration / 60)} minutes)\n` +
+      `**Duel Interval:** ${config.duel_interval} seconds (${Math.floor(config.duel_interval / 60)} minutes)\n` +
+      `**Minimum Votes:** ${config.min_votes}\n` +
+      `**Wildcard Chance:** ${(config.wildcard_chance * 100).toFixed(1)}%`
     );
 
-    const buttons1 = new ActionRowBuilder()
+    const row1 = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_set_duel_channel')
@@ -144,210 +176,215 @@ export default {
         new ButtonBuilder()
           .setCustomId('admin_clear_log_channel')
           .setLabel('Disable Logs')
-          .setStyle(ButtonStyle.Danger)
+          .setStyle(ButtonStyle.Secondary)
           .setDisabled(!config.log_channel_id)
       );
 
-    const buttons2 = new ActionRowBuilder()
+    const row2 = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_set_duel_duration')
-          .setLabel('Set Duel Duration')
+          .setLabel('Duel Duration')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('admin_set_duel_interval')
-          .setLabel('Set Duel Interval')
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-    const backButton = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('admin_back_main')
-          .setLabel('◀ Back to Main Menu')
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-    await interaction.editReply({ embeds: [embed], components: [buttons1, buttons2, backButton] });
-  },
-
-  async handleEloSettings(interaction, config) {
-    await interaction.deferUpdate();
-
-    const embed = embedUtils.createBaseEmbed();
-    embed.setTitle('🎮 ELO Settings');
-    embed.setDescription(
-      `\`\`\`css\n` +
-      `[ ELO Calculation Parameters ]\n` +
-      `\`\`\`\n` +
-      `**Starting ELO:** ${config.starting_elo}\n` +
-      `**K-Factor:** ${config.k_factor}\n` +
-      `**Min Votes for ELO:** ${config.min_votes}\n` +
-      `**Streak Bonus (2 wins):** ${(config.streak_bonus_2 * 100).toFixed(0)}%\n` +
-      `**Streak Bonus (3+ wins):** ${(config.streak_bonus_3 * 100).toFixed(0)}%\n` +
-      `**Upset Bonus:** ${(config.upset_bonus * 100).toFixed(0)}%\n` +
-      `**Wildcard Chance:** ${(config.wildcard_chance * 100).toFixed(0)}%\n` +
-      `**Losses Before Retirement:** ${config.losses_before_retirement}\n\n` +
-      `Use the buttons below to modify these settings ♡`
-    );
-
-    const buttons1 = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('admin_set_k_factor')
-          .setLabel('Set K-Factor')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('admin_set_starting_elo')
-          .setLabel('Set Starting ELO')
-          .setStyle(ButtonStyle.Primary),
+          .setLabel('Duel Interval')
+          .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('admin_set_min_votes')
-          .setLabel('Set Min Votes')
+          .setLabel('Min Votes')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    const row3 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_set_wildcard_chance')
+          .setLabel('Wildcard Chance')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_back_main')
+          .setLabel('◀ Back')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({
+      embeds: [embed],
+      components: [row1, row2, row3]
+    });
+  },
+
+  /**
+   * Show ELO settings
+   */
+  async handleEloSettings(interaction, config) {
+    const embed = embedUtils.createBaseEmbed();
+    embed.setTitle('📊 ELO Settings');
+    embed.setDescription(
+      `**Starting ELO:** ${config.starting_elo}\n` +
+      `**K-Factor:** ${config.k_factor}\n` +
+      `**Streak Bonus (2 wins):** +${(config.streak_bonus_2 * 100).toFixed(0)}%\n` +
+      `**Streak Bonus (3+ wins):** +${(config.streak_bonus_3 * 100).toFixed(0)}%\n` +
+      `**Upset Bonus:** +${(config.upset_bonus * 100).toFixed(0)}%`
+    );
+
+    const row1 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_set_starting_elo')
+          .setLabel('Starting ELO')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('admin_set_k_factor')
+          .setLabel('K-Factor')
           .setStyle(ButtonStyle.Primary)
       );
 
-    const buttons2 = new ActionRowBuilder()
+    const row2 = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_back_main')
+          .setLabel('◀ Back')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({
+      embeds: [embed],
+      components: [row1, row2]
+    });
+  },
+
+  /**
+   * Show retirement settings
+   */
+  async handleRetirementSettings(interaction, config) {
+    const embed = embedUtils.createBaseEmbed();
+    embed.setTitle('🗑️ Retirement Settings');
+    embed.setDescription(
+      `**Losses Before Retirement:** ${config.losses_before_retirement}\n` +
+      `**Max Active Images:** ${config.max_active_images}\n` +
+      `**Auto-Retire Threshold:** ${config.elo_clear_threshold ? `Below ${config.elo_clear_threshold} ELO` : 'Disabled'}`
+    );
+
+    const row1 = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_set_losses_retirement')
-          .setLabel('Set Losses Before Retirement')
+          .setLabel('Losses Before Retirement')
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
-          .setCustomId('admin_set_wildcard_chance')
-          .setLabel('Set Wildcard Chance')
-          .setStyle(ButtonStyle.Primary)
+          .setCustomId('admin_set_elo_threshold')
+          .setLabel('Set ELO Threshold')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('admin_clear_elo_threshold')
+          .setLabel('Clear Threshold')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(!config.elo_clear_threshold)
       );
 
-    const backButton = new ActionRowBuilder()
+    const row2 = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_back_main')
-          .setLabel('◀ Back to Main Menu')
+          .setLabel('◀ Back')
           .setStyle(ButtonStyle.Secondary)
       );
 
-    await interaction.editReply({ embeds: [embed], components: [buttons1, buttons2, backButton] });
+    await interaction.editReply({
+      embeds: [embed],
+      components: [row1, row2]
+    });
   },
 
-  async handleDuelControls(interaction, config) {
-    // Only defer if not already replied/deferred
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.deferUpdate();
-    }
+  /**
+   * Show import settings
+   */
+  async handleImportSettings(interaction, config) {
+    const channels = config.import_channel_ids || [];
+    const channelList = channels.length > 0
+      ? channels.map(id => `<#${id}>`).join(', ')
+      : 'None set';
 
     const embed = embedUtils.createBaseEmbed();
-    embed.setTitle('🎲 Duel Controls');
+    embed.setTitle('📥 Import Settings');
     embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Manual Duel Management ]\n` +
-      `\`\`\`\n` +
-      `**Current Status:** ${config.duel_active ? '✅ Active' : '❌ Inactive'}\n` +
-      `**Paused:** ${config.duel_paused ? 'Yes' : 'No'}\n\n` +
-      `Use the buttons below to control duels manually ♡\n\n` +
-      `⚠️ **Note:** Automatic scheduling is based on your interval settings.`
+      `**Import Channels:** ${channelList}\n\n` +
+      `Images posted in these channels will be automatically imported into the duel system.`
     );
 
-    const buttons = new ActionRowBuilder()
+    const row1 = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('admin_start_duel')
-          .setLabel('▶ Start Duel Now')
-          .setStyle(ButtonStyle.Success)
-          .setDisabled(config.duel_active),
-        new ButtonBuilder()
-          .setCustomId('admin_stop_duel')
-          .setLabel('⏹ Stop Current Duel')
-          .setStyle(ButtonStyle.Danger)
-          .setDisabled(!config.duel_active),
-        new ButtonBuilder()
-          .setCustomId('admin_skip_duel')
-          .setLabel('⏭ Skip to Next')
-          .setStyle(ButtonStyle.Primary)
-          .setDisabled(!config.duel_active)
-      );
-
-    const buttons2 = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('admin_pause_duel')
-          .setLabel('⏸ Pause Scheduling')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(config.duel_paused),
-        new ButtonBuilder()
-          .setCustomId('admin_resume_duel')
-          .setLabel('▶ Resume Scheduling')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(!config.duel_paused)
-      );
-
-    const backButton = new ActionRowBuilder()
-      .addComponents(
+          .setCustomId('admin_import_images')
+          .setLabel('Set Import Channels')
+          .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId('admin_back_main')
-          .setLabel('◀ Back to Main Menu')
+          .setLabel('◀ Back')
           .setStyle(ButtonStyle.Secondary)
       );
 
-    await interaction.editReply({ embeds: [embed], components: [buttons, buttons2, backButton] });
+    await interaction.editReply({
+      embeds: [embed],
+      components: [row1]
+    });
   },
 
-  async handleSeasonManagement(interaction, config) {
-    await interaction.deferUpdate();
-
+  /**
+   * Show dangerous actions
+   */
+  async handleDangerousActions(interaction, config) {
     const embed = embedUtils.createBaseEmbed();
-    embed.setTitle('🔄 Season Management');
+    embed.setTitle('⚠️ Dangerous Actions');
     embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Current Season Information ]\n` +
-      `\`\`\`\n` +
-      `**Current Season:** ${config.season_number}\n\n` +
-      `⚠️ **Warning:** Resetting the season will:\n` +
-      `• Soft reset all ELO ratings\n` +
-      `• Archive current season data\n` +
-      `• Remove low-ranking images\n` +
-      `• Require password confirmation\n\n` +
-      `This action cannot be undone! ♡`
+      `**Warning:** These actions cannot be undone!\n\n` +
+      `**Season Reset:** Resets all image ELO to starting value, preserves images\n` +
+      `**System Reset:** Deletes ALL data including images, duels, and votes`
     );
+    embed.setColor(0xFF0000);
 
-    const buttons = new ActionRowBuilder()
+    const row1 = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('admin_reset_season')
-          .setLabel('🔄 Reset Season')
+          .setCustomId('admin_season_reset')
+          .setLabel('Season Reset')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('admin_system_reset')
+          .setLabel('⚠️ System Reset')
           .setStyle(ButtonStyle.Danger)
       );
 
-    const backButton = new ActionRowBuilder()
+    const row2 = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_back_main')
-          .setLabel('◀ Back to Main Menu')
+          .setLabel('◀ Back')
           .setStyle(ButtonStyle.Secondary)
       );
 
-    await interaction.editReply({ embeds: [embed], components: [buttons, backButton] });
+    await interaction.editReply({
+      embeds: [embed],
+      components: [row1, row2]
+    });
   },
 
-  async handleSystemReset(interaction, config) {
-    const systemReset = await import('./systemReset.js');
-    await systemReset.default.showResetWarning(interaction);
-  },
+  // ========================================
+  // MODAL CREATORS
+  // ========================================
 
-  // Modal creators
   createKFactorModal() {
     const modal = new ModalBuilder()
       .setCustomId('modal_k_factor')
       .setTitle('Set K-Factor');
 
     const input = new TextInputBuilder()
-      .setCustomId('k_factor_input')
+      .setCustomId('k_factor')
       .setLabel('K-Factor (default: 30)')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('30')
-      .setRequired(true)
-      .setMinLength(1)
-      .setMaxLength(3);
+      .setPlaceholder('e.g., 30')
+      .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
@@ -359,13 +396,11 @@ export default {
       .setTitle('Set Starting ELO');
 
     const input = new TextInputBuilder()
-      .setCustomId('starting_elo_input')
+      .setCustomId('starting_elo')
       .setLabel('Starting ELO (default: 1000)')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('1000')
-      .setRequired(true)
-      .setMinLength(3)
-      .setMaxLength(5);
+      .setPlaceholder('e.g., 1000')
+      .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
@@ -377,13 +412,11 @@ export default {
       .setTitle('Set Duel Duration');
 
     const input = new TextInputBuilder()
-      .setCustomId('duel_duration_input')
-      .setLabel('Duration in minutes (default: 30)')
+      .setCustomId('duel_duration')
+      .setLabel('Duration in seconds (default: 1800)')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('30')
-      .setRequired(true)
-      .setMinLength(1)
-      .setMaxLength(4);
+      .setPlaceholder('e.g., 1800 (30 minutes)')
+      .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
@@ -395,13 +428,11 @@ export default {
       .setTitle('Set Duel Interval');
 
     const input = new TextInputBuilder()
-      .setCustomId('duel_interval_input')
-      .setLabel('Interval in minutes (default: 30)')
+      .setCustomId('duel_interval')
+      .setLabel('Interval in seconds (default: 1800)')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('30')
-      .setRequired(true)
-      .setMinLength(1)
-      .setMaxLength(4);
+      .setPlaceholder('e.g., 1800 (30 minutes)')
+      .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
@@ -413,13 +444,11 @@ export default {
       .setTitle('Set Minimum Votes');
 
     const input = new TextInputBuilder()
-      .setCustomId('min_votes_input')
-      .setLabel('Min votes for ELO change (default: 1)')
+      .setCustomId('min_votes')
+      .setLabel('Minimum votes required (default: 1)')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('1')
-      .setRequired(true)
-      .setMinLength(1)
-      .setMaxLength(2);
+      .setPlaceholder('e.g., 1')
+      .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
@@ -431,13 +460,11 @@ export default {
       .setTitle('Set Losses Before Retirement');
 
     const input = new TextInputBuilder()
-      .setCustomId('losses_retirement_input')
-      .setLabel('Number of losses (default: 3)')
+      .setCustomId('losses_retirement')
+      .setLabel('Consecutive losses (default: 3)')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('3')
-      .setRequired(true)
-      .setMinLength(1)
-      .setMaxLength(2);
+      .setPlaceholder('e.g., 3')
+      .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
@@ -449,62 +476,10 @@ export default {
       .setTitle('Set Wildcard Chance');
 
     const input = new TextInputBuilder()
-      .setCustomId('wildcard_chance_input')
-      .setLabel('Percentage (0-100, default: 5)')
+      .setCustomId('wildcard_chance')
+      .setLabel('Chance as decimal (default: 0.05 = 5%)')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('5')
-      .setRequired(true)
-      .setMinLength(1)
-      .setMaxLength(3);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    return modal;
-  },
-
-  createImportChannelsModal() {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_import_channels')
-      .setTitle('Import Images from Channels');
-
-    const input = new TextInputBuilder()
-      .setCustomId('import_channels_input')
-      .setLabel('Channel IDs (comma-separated)')
-      .setStyle(TextInputStyle.Paragraph)
-      .setPlaceholder('123456789,987654321')
-      .setRequired(true);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    return modal;
-  },
-
-  createEloThresholdModal() {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_elo_threshold')
-      .setTitle('Clear Images Below ELO');
-
-    const input = new TextInputBuilder()
-      .setCustomId('elo_threshold_input')
-      .setLabel('ELO Threshold')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('800')
-      .setRequired(true)
-      .setMinLength(3)
-      .setMaxLength(4);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    return modal;
-  },
-
-  createSeasonResetModal() {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_season_reset')
-      .setTitle('Confirm Season Reset');
-
-    const input = new TextInputBuilder()
-      .setCustomId('season_reset_password')
-      .setLabel('Enter season reset password')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Enter password')
+      .setPlaceholder('e.g., 0.05')
       .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
@@ -517,17 +492,16 @@ export default {
       .setTitle('Set Duel Channel');
 
     const input = new TextInputBuilder()
-      .setCustomId('duel_channel_input')
-      .setLabel('Channel ID')
+      .setCustomId('duel_channel')
+      .setLabel('Duel Channel ID')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('123456789')
+      .setPlaceholder('Right-click channel, Copy ID')
       .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
   },
 
-  // NEW: Log channel modal
   createLogChannelModal() {
     const modal = new ModalBuilder()
       .setCustomId('modal_log_channel')
@@ -535,12 +509,76 @@ export default {
 
     const input = new TextInputBuilder()
       .setCustomId('log_channel_input')
-      .setLabel('Channel ID for admin logs')
+      .setLabel('Log Channel ID')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('123456789')
+      .setPlaceholder('Right-click channel, Copy ID')
       .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     return modal;
   },
+
+  createImportChannelsModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_import_channels')
+      .setTitle('Set Import Channels');
+
+    const input = new TextInputBuilder()
+      .setCustomId('import_channels')
+      .setLabel('Channel IDs (comma-separated)')
+      .setStyle(TextInputStyle.Paragraph)
+      .setPlaceholder('e.g., 123456789,987654321')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return modal;
+  },
+
+  createEloThresholdModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_elo_threshold')
+      .setTitle('Set Auto-Retire ELO Threshold');
+
+    const input = new TextInputBuilder()
+      .setCustomId('elo_threshold')
+      .setLabel('Retire images below this ELO')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('e.g., 800')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return modal;
+  },
+
+  createSeasonResetModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_season_reset')
+      .setTitle('⚠️ Confirm Season Reset');
+
+    const input = new TextInputBuilder()
+      .setCustomId('confirm_reset')
+      .setLabel('Type RESET to confirm')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('RESET')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return modal;
+  },
+
+  createSystemResetModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_system_reset')
+      .setTitle('⚠️ DANGER: System Reset');
+
+    const input = new TextInputBuilder()
+      .setCustomId('confirm_delete')
+      .setLabel('Type DELETE ALL to confirm')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('DELETE ALL')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return modal;
+  }
 };
