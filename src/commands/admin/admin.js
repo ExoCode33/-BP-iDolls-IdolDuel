@@ -1,6 +1,6 @@
 /**
- * Admin Command
- * Simple admin panel with stats and controls
+ * Enhanced Admin Command
+ * Full control panel with editable settings and image management
  */
 
 import { 
@@ -8,7 +8,6 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  StringSelectMenuBuilder,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -77,12 +76,12 @@ export default {
       const embed = embedUtils.createBaseEmbed();
       embed.setTitle('⚙️ IdolDuel Admin Panel');
       
-      const scheduleHours = config.duel_interval / 3600;
+      const scheduleMinutes = Math.floor(config.duel_interval / 60);
       const retirementInfo = retirement.getRetirementInfo(config.duel_interval);
 
       embed.setDescription(
         `**Status:** ${config.duel_active ? (config.duel_paused ? '⏸️ Paused' : '✅ Active') : '❌ Stopped'}\n` +
-        `**Schedule:** Every ${scheduleHours}h for ${scheduleHours}h\n` +
+        `**Schedule:** Every ${scheduleMinutes} min for ${scheduleMinutes} min\n` +
         `**Season:** ${config.season_number}\n\n` +
         `**📊 Statistics:**\n` +
         `• Images: ${imageStats.active} active, ${imageStats.retired} retired\n` +
@@ -95,7 +94,7 @@ export default {
         `Use the buttons below to control the system.`
       );
 
-      // Control buttons
+      // Control buttons (Row 1)
       const controlRow = new ActionRowBuilder();
 
       if (!config.duel_active) {
@@ -139,9 +138,43 @@ export default {
         );
       }
 
+      // Settings buttons (Row 2)
+      const settingsRow = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('admin_edit_schedule')
+            .setLabel('⏱️ Schedule')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId('admin_edit_elo')
+            .setLabel('📊 ELO Settings')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId('admin_import_images')
+            .setLabel('📥 Import Images')
+            .setStyle(ButtonStyle.Primary)
+        );
+
+      // Management buttons (Row 3)
+      const managementRow = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('admin_browse_images')
+            .setLabel('🖼️ Browse Images')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId('admin_reset_season')
+            .setLabel('🔄 Reset Season')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId('admin_system_reset')
+            .setLabel('⚠️ System Reset')
+            .setStyle(ButtonStyle.Danger)
+        );
+
       await interaction.editReply({ 
         embeds: [embed], 
-        components: [controlRow]
+        components: [controlRow, settingsRow, managementRow]
       });
     } catch (error) {
       console.error('Error in admin command:', error);
