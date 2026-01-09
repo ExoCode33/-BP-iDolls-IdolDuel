@@ -94,7 +94,6 @@ export async function handleButtonInteraction(interaction) {
     return;
   }
 
-  // NEW: Log channel configuration buttons
   if (customId === 'admin_set_log_channel') {
     await interaction.showModal(adminConfig.createLogChannelModal());
     return;
@@ -116,11 +115,6 @@ export async function handleButtonInteraction(interaction) {
     return;
   }
 
-  if (customId === 'admin_skip_duel') {
-    await handleSkipDuelButton(interaction);
-    return;
-  }
-
   if (customId === 'admin_pause_duel') {
     await handlePauseDuelButton(interaction);
     return;
@@ -131,9 +125,90 @@ export async function handleButtonInteraction(interaction) {
     return;
   }
 
-  // Admin buttons - image management (NEW)
+  if (customId === 'admin_skip_duel') {
+    await handleSkipDuelButton(interaction);
+    return;
+  }
+
+  // Admin buttons - image management
+  if (customId === 'admin_image_management') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await imageManagement.showImageManagement(interaction, config);
+    return;
+  }
+
   if (customId === 'admin_import_images') {
     await interaction.showModal(adminConfig.createImportChannelsModal());
+    return;
+  }
+
+  // NEW: Start gallery view
+  if (customId === 'start_gallery_view') {
+    await imageManagement.showGallery(interaction, 0, 'elo', 'all');
+    return;
+  }
+
+  // NEW: Gallery actions
+  if (customId.startsWith('gallery_')) {
+    await handleGalleryActions(interaction);
+    return;
+  }
+
+  // NEW: Quick bulk operations
+  if (customId === 'quick_bulk_retire') {
+    await imageManagement.showQuickBulkRetire(interaction);
+    return;
+  }
+
+  if (customId === 'quick_bulk_unretire') {
+    await imageManagement.showQuickBulkUnretire(interaction);
+    return;
+  }
+
+  if (customId.startsWith('bulk_retire_')) {
+    const threshold = customId === 'bulk_retire_custom' ? null : parseInt(customId.split('_')[2]);
+    if (threshold) {
+      await imageManagement.executeBulkRetire(interaction, threshold);
+    } else {
+      const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = await import('discord.js');
+      const modal = new ModalBuilder()
+        .setCustomId('modal_bulk_retire_custom')
+        .setTitle('Custom ELO Threshold');
+      
+      const input = new TextInputBuilder()
+        .setCustomId('threshold')
+        .setLabel('Retire all images below this ELO')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g., 950')
+        .setRequired(true);
+      
+      modal.addComponents(new ActionRowBuilder().addComponents(input));
+      await interaction.showModal(modal);
+    }
+    return;
+  }
+
+  if (customId.startsWith('bulk_unretire_')) {
+    const threshold = customId === 'bulk_unretire_custom' ? null : parseInt(customId.split('_')[2]);
+    if (threshold) {
+      await imageManagement.executeBulkUnretire(interaction, threshold);
+    } else {
+      const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = await import('discord.js');
+      const modal = new ModalBuilder()
+        .setCustomId('modal_bulk_unretire_custom')
+        .setTitle('Custom ELO Threshold');
+      
+      const input = new TextInputBuilder()
+        .setCustomId('threshold')
+        .setLabel('Unretire all images above this ELO')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g., 1050')
+        .setRequired(true);
+      
+      modal.addComponents(new ActionRowBuilder().addComponents(input));
+      await interaction.showModal(modal);
+    }
     return;
   }
 
@@ -152,7 +227,6 @@ export async function handleButtonInteraction(interaction) {
     return;
   }
 
-  // NEW: Bulk unretire button
   if (customId === 'admin_bulk_unretire') {
     await imageManagement.showBulkUnretire(interaction);
     return;
@@ -163,61 +237,6 @@ export async function handleButtonInteraction(interaction) {
     return;
   }
 
-  // NEW: Image browser action buttons
-  if (customId === 'browse_view_image') {
-    await interaction.showModal(imageManagement.createViewImageModal());
-    return;
-  }
-
-  if (customId === 'browse_retire_image') {
-    await interaction.showModal(imageManagement.createRetireImageModal());
-    return;
-  }
-
-  if (customId === 'browse_unretire_image') {
-    await interaction.showModal(imageManagement.createUnretireImageModal());
-    return;
-  }
-
-  if (customId === 'browse_delete_image') {
-    await interaction.showModal(imageManagement.createDeleteImageModal());
-    return;
-  }
-
-  // NEW: Individual image action buttons (from view screen)
-  if (customId.startsWith('image_action_retire_')) {
-    const imageId = parseInt(customId.split('_')[3]);
-    await handleRetireImageDirect(interaction, imageId);
-    return;
-  }
-
-  if (customId.startsWith('image_action_unretire_')) {
-    const imageId = parseInt(customId.split('_')[3]);
-    await handleUnretireImageDirect(interaction, imageId);
-    return;
-  }
-
-  if (customId.startsWith('image_action_delete_')) {
-    const imageId = parseInt(customId.split('_')[3]);
-    await handleDeleteImageDirect(interaction, imageId);
-    return;
-  }
-
-  // NEW: Delete confirmation buttons
-  if (customId.startsWith('confirm_delete_')) {
-    const imageId = parseInt(customId.split('_')[2]);
-    await handleConfirmDelete(interaction, imageId);
-    return;
-  }
-
-  if (customId === 'cancel_delete') {
-    await interaction.deferUpdate();
-    const embed = embedUtils.createSuccessEmbed('Deletion cancelled.');
-    await interaction.editReply({ embeds: [embed], components: [] });
-    return;
-  }
-
-  // Image browser navigation (NEW)
   if (customId.startsWith('browse_images_')) {
     await handleBrowseNavigation(interaction);
     return;
@@ -230,173 +249,239 @@ export async function handleButtonInteraction(interaction) {
     return;
   }
 
-  // Admin logs navigation (NEW)
+  // Admin logs navigation
   if (customId.startsWith('logs_')) {
     await handleLogsNavigation(interaction);
     return;
   }
 
-  // Old image list buttons (kept for backward compatibility)
   if (customId === 'admin_list_images') {
-    await handleListImagesButton(interaction);
+    await imageManagement.listImages(interaction);
     return;
   }
 
-  if (customId === 'image_list_prev') {
-    await handleImageListNavigation(interaction, 'prev');
+  if (customId === 'admin_view_logs') {
+    await adminLogs.showLogs(interaction);
     return;
   }
 
-  if (customId === 'image_list_next') {
-    await handleImageListNavigation(interaction, 'next');
+  // Admin buttons - advanced settings
+  if (customId === 'admin_basic_settings') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.handleBasicSettings(interaction, config);
     return;
   }
 
-  if (customId === 'admin_clear_low_elo') {
-    await interaction.showModal(adminConfig.createEloThresholdModal());
+  if (customId === 'admin_elo_settings') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.handleEloSettings(interaction, config);
     return;
   }
 
-  // Admin buttons - season management
-  if (customId === 'admin_reset_season') {
+  if (customId === 'admin_retirement_settings') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.handleRetirementSettings(interaction, config);
+    return;
+  }
+
+  if (customId === 'admin_import_settings') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.handleImportSettings(interaction, config);
+    return;
+  }
+
+  if (customId === 'admin_dangerous_actions') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await adminConfig.handleDangerousActions(interaction, config);
+    return;
+  }
+
+  if (customId === 'admin_season_reset') {
     await interaction.showModal(adminConfig.createSeasonResetModal());
     return;
   }
 
-  // System reset buttons
-  if (customId === 'confirm_system_reset') {
-    const systemReset = await import('../commands/admin/systemReset.js');
-    await systemReset.default.showPasswordModal(interaction);
+  if (customId === 'admin_system_reset') {
+    await interaction.showModal(adminConfig.createSystemResetModal());
     return;
   }
 
-  if (customId === 'cancel_system_reset') {
-    await interaction.deferUpdate();
-    const embed = embedUtils.createSuccessEmbed('System reset cancelled.');
-    await interaction.editReply({ embeds: [embed], components: [] });
+  if (customId === 'admin_set_elo_threshold') {
+    await interaction.showModal(adminConfig.createEloThresholdModal());
+    return;
+  }
+
+  if (customId === 'admin_clear_elo_threshold') {
+    await handleClearEloThreshold(interaction);
     return;
   }
 }
 
+// Helper function: Handle vote button
 async function handleVoteButton(interaction) {
-  const imageId = parseInt(interaction.customId.split('_')[2]);
-  const guildId = interaction.guild.id;
-  const userId = interaction.user.id;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  const success = await duelManager.castVote(guildId, userId, imageId);
+  try {
+    const imageId = parseInt(interaction.customId.split('_')[2]);
+    const guildId = interaction.guild.id;
 
-  if (success) {
-    await interaction.reply({ 
-      content: '✅ Your vote has been recorded! ♡', 
-      flags: MessageFlags.Ephemeral 
-    });
-  } else {
-    await interaction.reply({ 
-      content: '❌ You\'ve already voted in this duel! You can only vote once. (>﹏<)', 
-      flags: MessageFlags.Ephemeral 
-    });
+    // Get active duel
+    const activeDuelResult = await database.query(
+      'SELECT duel_id, image1_id, image2_id FROM active_duels WHERE guild_id = $1',
+      [guildId]
+    );
+
+    if (activeDuelResult.rows.length === 0) {
+      const errorEmbed = embedUtils.createErrorEmbed('No active duel found.');
+      await interaction.editReply({ embeds: [errorEmbed] });
+      return;
+    }
+
+    const { duel_id, image1_id, image2_id } = activeDuelResult.rows[0];
+
+    // Check if image is in this duel
+    if (imageId !== image1_id && imageId !== image2_id) {
+      const errorEmbed = embedUtils.createErrorEmbed('Invalid vote - this image is not in the current duel.');
+      await interaction.editReply({ embeds: [errorEmbed] });
+      return;
+    }
+
+    // Check if user already voted
+    const existingVote = await database.query(
+      'SELECT image_id FROM votes WHERE duel_id = $1 AND user_id = $2',
+      [duel_id, interaction.user.id]
+    );
+
+    if (existingVote.rows.length > 0) {
+      const votedImageId = existingVote.rows[0].image_id;
+      
+      if (votedImageId === imageId) {
+        const errorEmbed = embedUtils.createErrorEmbed('You already voted for this image!');
+        await interaction.editReply({ embeds: [errorEmbed] });
+        return;
+      }
+
+      // Change vote
+      await database.query(
+        'UPDATE votes SET image_id = $1, voted_at = NOW() WHERE duel_id = $2 AND user_id = $3',
+        [imageId, duel_id, interaction.user.id]
+      );
+
+      const successEmbed = embedUtils.createSuccessEmbed('Vote changed! ♡');
+      await interaction.editReply({ embeds: [successEmbed] });
+
+      // Update duel message
+      await duelManager.updateDuelMessage(guildId);
+      return;
+    }
+
+    // Record new vote
+    await database.query(
+      'INSERT INTO votes (duel_id, user_id, image_id) VALUES ($1, $2, $3)',
+      [duel_id, interaction.user.id, imageId]
+    );
+
+    // Update user voting stats
+    await database.query(
+      `INSERT INTO users (guild_id, user_id, total_votes_cast)
+       VALUES ($1, $2, 1)
+       ON CONFLICT (guild_id, user_id)
+       DO UPDATE SET total_votes_cast = users.total_votes_cast + 1`,
+      [guildId, interaction.user.id]
+    );
+
+    const successEmbed = embedUtils.createSuccessEmbed('Vote recorded! ♡');
+    await interaction.editReply({ embeds: [successEmbed] });
+
+    // Update duel message
+    await duelManager.updateDuelMessage(guildId);
+  } catch (error) {
+    console.error('Error handling vote:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to record vote.');
+    await interaction.editReply({ embeds: [errorEmbed] });
   }
 }
 
+// Helper function: Handle caption button
 async function handleCaptionButton(interaction) {
   const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = await import('discord.js');
   
   const modal = new ModalBuilder()
     .setCustomId('modal_add_caption')
-    .setTitle('Add Anonymous Caption');
+    .setTitle('Add Caption');
 
   const captionInput = new TextInputBuilder()
-    .setCustomId('caption_input')
-    .setLabel('Your caption (keep it friendly!)')
+    .setCustomId('caption_text')
+    .setLabel('Your caption')
     .setStyle(TextInputStyle.Paragraph)
-    .setPlaceholder('Write your caption here...')
+    .setPlaceholder('Enter a fun caption for this image...')
     .setRequired(true)
-    .setMaxLength(200);
+    .setMaxLength(500);
 
-  const imageSelect = new TextInputBuilder()
-    .setCustomId('image_select')
-    .setLabel('Which image? (Type A or B)')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('A or B')
-    .setRequired(true)
-    .setMaxLength(1);
-
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(imageSelect),
-    new ActionRowBuilder().addComponents(captionInput)
-  );
-
+  modal.addComponents(new ActionRowBuilder().addComponents(captionInput));
   await interaction.showModal(modal);
 }
 
+// Helper function: Handle start duel button
 async function handleStartDuelButton(interaction) {
   await interaction.deferUpdate();
 
   try {
     const guildId = interaction.guild.id;
+    
+    // Get config
     const config = await adminConfig.getOrCreateConfig(guildId);
+    
+    if (!config.duel_channel_id) {
+      const errorEmbed = embedUtils.createErrorEmbed('Please set a duel channel first!');
+      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+      return;
+    }
 
-    // Start duel via duel scheduler
-    await interaction.client.duelScheduler.startDuelNow(guildId);
-
-    const successEmbed = embedUtils.createSuccessEmbed('Duel started successfully!');
+    // Start duel system
+    await duelManager.startDuelSystem(guildId, interaction.client);
+    
+    const successEmbed = embedUtils.createSuccessEmbed('Duel system started! ♡');
     await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
-    // Refresh the control panel
-    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
-    await adminConfig.handleDuelControls(interaction, updatedConfig);
+    // Refresh main menu
+    const newConfig = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.showMainMenu(interaction, newConfig);
   } catch (error) {
     console.error('Error starting duel:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to start duel.');
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to start duel system: ' + error.message);
     await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
+// Helper function: Handle stop duel button
 async function handleStopDuelButton(interaction) {
   await interaction.deferUpdate();
 
   try {
     const guildId = interaction.guild.id;
     
-    // End current duel
-    await interaction.client.duelScheduler.endDuelNow(guildId);
-
-    const successEmbed = embedUtils.createSuccessEmbed('Current duel stopped!');
+    await duelManager.stopDuelSystem(guildId);
+    
+    const successEmbed = embedUtils.createSuccessEmbed('Duel system stopped.');
     await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
-    // Refresh the control panel
-    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
-    await adminConfig.handleDuelControls(interaction, updatedConfig);
+    // Refresh main menu
+    const config = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.showMainMenu(interaction, config);
   } catch (error) {
     console.error('Error stopping duel:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to stop duel.');
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to stop duel system.');
     await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
-async function handleSkipDuelButton(interaction) {
-  await interaction.deferUpdate();
-
-  try {
-    const guildId = interaction.guild.id;
-    
-    // End current and start new
-    await interaction.client.duelScheduler.endDuelNow(guildId);
-    await interaction.client.duelScheduler.startDuelNow(guildId);
-
-    const successEmbed = embedUtils.createSuccessEmbed('Skipped to next duel!');
-    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
-
-    // Refresh the control panel
-    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
-    await adminConfig.handleDuelControls(interaction, updatedConfig);
-  } catch (error) {
-    console.error('Error skipping duel:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to skip duel.');
-    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-  }
-}
-
+// Helper function: Handle pause duel button
 async function handlePauseDuelButton(interaction) {
   await interaction.deferUpdate();
 
@@ -407,20 +492,21 @@ async function handlePauseDuelButton(interaction) {
       'UPDATE guild_config SET duel_paused = true WHERE guild_id = $1',
       [guildId]
     );
-
-    const successEmbed = embedUtils.createSuccessEmbed('Duel scheduling paused!');
+    
+    const successEmbed = embedUtils.createSuccessEmbed('Duel system paused.');
     await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
-    // Refresh the control panel
-    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
-    await adminConfig.handleDuelControls(interaction, updatedConfig);
+    // Refresh main menu
+    const config = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.showMainMenu(interaction, config);
   } catch (error) {
-    console.error('Error pausing duels:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to pause scheduling.');
+    console.error('Error pausing duel:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to pause duel system.');
     await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
+// Helper function: Handle resume duel button
 async function handleResumeDuelButton(interaction) {
   await interaction.deferUpdate();
 
@@ -431,102 +517,54 @@ async function handleResumeDuelButton(interaction) {
       'UPDATE guild_config SET duel_paused = false WHERE guild_id = $1',
       [guildId]
     );
-
-    const successEmbed = embedUtils.createSuccessEmbed('Duel scheduling resumed!');
+    
+    const successEmbed = embedUtils.createSuccessEmbed('Duel system resumed.');
     await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
-    // Refresh the control panel
-    const updatedConfig = await adminConfig.getOrCreateConfig(guildId);
-    await adminConfig.handleDuelControls(interaction, updatedConfig);
+    // Refresh main menu
+    const config = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.showMainMenu(interaction, config);
   } catch (error) {
-    console.error('Error resuming duels:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to resume scheduling.');
+    console.error('Error resuming duel:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to resume duel system.');
     await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
-// NEW: Handle browse images navigation
-async function handleBrowseNavigation(interaction) {
-  const content = interaction.message.content;
-  const match = content.match(/__BROWSE_STATE:(.+?)__/);
-  
-  if (!match) {
-    await interaction.reply({ 
-      content: 'Navigation data not found. Please start over.', 
-      flags: MessageFlags.Ephemeral 
-    });
-    return;
-  }
-  
-  const state = JSON.parse(match[1]);
-  let { page, sortBy, filterActive } = state;
-  
-  if (interaction.customId === 'browse_images_next') {
-    page++;
-  } else if (interaction.customId === 'browse_images_prev') {
-    page--;
-  } else if (interaction.customId === 'browse_images_first') {
-    page = 1;
-  } else if (interaction.customId === 'browse_images_last') {
-    // Calculate last page
-    let filterClause = '';
-    if (filterActive === 'active') filterClause = 'AND retired = false';
-    if (filterActive === 'retired') filterClause = 'AND retired = true';
+// Helper function: Handle skip duel button  
+async function handleSkipDuelButton(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const guildId = interaction.guild.id;
     
-    const countResult = await database.query(
-      `SELECT COUNT(*) as total FROM images WHERE guild_id = $1 ${filterClause}`,
-      [interaction.guild.id]
-    );
-    const totalPages = Math.ceil(parseInt(countResult.rows[0].total) / 25);
-    page = totalPages;
+    // End current duel without winner (will trigger new duel with NEW images)
+    await duelManager.endCurrentDuel(guildId, null);
+    
+    const successEmbed = embedUtils.createSuccessEmbed('Current duel skipped! Starting next duel...');
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+
+    // Refresh main menu
+    const config = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.showMainMenu(interaction, config);
+  } catch (error) {
+    console.error('Error skipping duel:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to skip duel: ' + error.message);
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
-  
-  await imageManagement.browseImages(interaction, page, sortBy, filterActive);
 }
 
-// NEW: Handle admin logs navigation
-async function handleLogsNavigation(interaction) {
-  if (interaction.customId === 'logs_export') {
-    await adminLogs.exportLogs(interaction);
-    return;
-  }
-
-  const content = interaction.message.content;
-  const match = content.match(/__LOGS_STATE:(.+?)__/);
-  
-  if (!match) {
-    await interaction.reply({ 
-      content: 'Navigation data not found. Please start over.', 
-      flags: MessageFlags.Ephemeral 
-    });
-    return;
-  }
-  
-  const state = JSON.parse(match[1]);
-  let { page, filterType } = state;
-  
-  if (interaction.customId === 'logs_next') {
-    page++;
-  } else if (interaction.customId === 'logs_prev') {
-    page--;
-  } else if (interaction.customId === 'logs_refresh') {
-    page = 1;
-  }
-  
-  await adminLogs.showAdminLogs(interaction, page, filterType);
-}
-
-// NEW: Handle export stats
+// Helper function: Handle export stats
 async function handleExportStats(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const guildId = interaction.guild.id;
-
-    // Get all image stats
+    
+    // Get all images with stats
     const result = await database.query(
-      `SELECT id, elo, wins, losses, current_streak, best_streak, 
-              total_votes_received, uploader_id, retired, imported_at
+      `SELECT id, elo, wins, losses, current_streak, best_streak, total_votes_received, 
+              retired, uploader_id, imported_at
        FROM images 
        WHERE guild_id = $1 
        ORDER BY elo DESC`,
@@ -534,32 +572,33 @@ async function handleExportStats(interaction) {
     );
 
     if (result.rows.length === 0) {
-      const errorEmbed = embedUtils.createErrorEmbed('No images found to export.');
+      const errorEmbed = embedUtils.createErrorEmbed('No images to export.');
       await interaction.editReply({ embeds: [errorEmbed] });
       return;
     }
 
-    // Format as CSV
-    let csv = 'ID,ELO,Wins,Losses,Win Rate,Current Streak,Best Streak,Total Votes,Uploader ID,Status,Imported At\n';
-    
-    result.rows.forEach(img => {
-      const winRate = eloService.calculateWinRate(img.wins, img.losses);
+    // Create CSV
+    const headers = 'ID,ELO,Wins,Losses,Win Rate,Current Streak,Best Streak,Total Votes,Status,Uploader ID,Import Date\n';
+    const rows = result.rows.map(img => {
+      const winRate = img.wins + img.losses > 0 
+        ? ((img.wins / (img.wins + img.losses)) * 100).toFixed(1)
+        : '0.0';
       const status = img.retired ? 'Retired' : 'Active';
-      csv += `${img.id},${img.elo},${img.wins},${img.losses},${winRate}%,${img.current_streak},${img.best_streak},${img.total_votes_received},${img.uploader_id},${status},${img.imported_at}\n`;
-    });
+      return `${img.id},${img.elo},${img.wins},${img.losses},${winRate},${img.current_streak},${img.best_streak},${img.total_votes_received},${status},${img.uploader_id},${img.imported_at}`;
+    }).join('\n');
 
-    // Create file
+    const csv = headers + rows;
+    
+    // Create buffer and send as attachment
     const buffer = Buffer.from(csv, 'utf-8');
-    const attachment = {
-      attachment: buffer,
-      name: `image-stats-${Date.now()}.csv`
-    };
+    const { AttachmentBuilder } = await import('discord.js');
+    const attachment = new AttachmentBuilder(buffer, { name: 'image_stats.csv' });
 
-    const embed = embedUtils.createSuccessEmbed(
-      `Exported stats for ${result.rows.length} images.\nCheck the attached CSV file.`
+    const successEmbed = embedUtils.createSuccessEmbed(
+      `Exported stats for ${result.rows.length} images!`
     );
 
-    await interaction.editReply({ embeds: [embed], files: [attachment] });
+    await interaction.editReply({ embeds: [successEmbed], files: [attachment] });
   } catch (error) {
     console.error('Error exporting stats:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to export stats.');
@@ -567,162 +606,90 @@ async function handleExportStats(interaction) {
   }
 }
 
-// OLD: Keep for backward compatibility
-async function handleListImagesButton(interaction) {
+// Helper function: Handle browse navigation
+async function handleBrowseNavigation(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const customId = interaction.customId;
+    const content = interaction.message.content;
+    const match = content.match(/__BROWSE_STATE:(.+?)__/);
+    
+    if (!match) {
+      const errorEmbed = embedUtils.createErrorEmbed('Navigation state lost. Please browse again.');
+      await interaction.editReply({ embeds: [errorEmbed] });
+      return;
+    }
+
+    const state = JSON.parse(match[1]);
+    let { page, sortBy, filterActive } = state;
+
+    if (customId === 'browse_images_first') {
+      page = 1;
+    } else if (customId === 'browse_images_prev') {
+      page--;
+    } else if (customId === 'browse_images_next') {
+      page++;
+    } else if (customId === 'browse_images_last') {
+      // Get total pages
+      const guildId = interaction.guild.id;
+      let filterClause = '';
+      if (filterActive === 'active') filterClause = 'AND retired = false';
+      if (filterActive === 'retired') filterClause = 'AND retired = true';
+      
+      const countResult = await database.query(
+        `SELECT COUNT(*) as total FROM images WHERE guild_id = $1 ${filterClause}`,
+        [guildId]
+      );
+      const totalItems = parseInt(countResult.rows[0].total);
+      page = Math.ceil(totalItems / 25);
+    }
+
+    await imageManagement.browseImages(interaction, page, sortBy, filterActive);
+  } catch (error) {
+    console.error('Error navigating browse:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Navigation error.');
+    await interaction.editReply({ embeds: [errorEmbed] });
+  }
+}
+
+// Helper function: Handle logs navigation
+async function handleLogsNavigation(interaction) {
+  const customId = interaction.customId;
+  
+  if (customId === 'logs_prev') {
+    await adminLogs.handlePrevPage(interaction);
+  } else if (customId === 'logs_next') {
+    await adminLogs.handleNextPage(interaction);
+  }
+}
+
+// Helper function: Clear ELO threshold
+async function handleClearEloThreshold(interaction) {
   await interaction.deferUpdate();
 
   try {
     const guildId = interaction.guild.id;
     
-    const result = await database.query(
-      `SELECT id, elo, wins, losses, uploader_id, retired, s3_key 
-       FROM images 
-       WHERE guild_id = $1 
-       ORDER BY elo DESC 
-       LIMIT 10`,
+    await database.query(
+      'UPDATE guild_config SET elo_clear_threshold = NULL WHERE guild_id = $1',
       [guildId]
     );
 
-    if (result.rows.length === 0) {
-      const errorEmbed = embedUtils.createErrorEmbed('No images found in database.');
-      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-      return;
-    }
+    const successEmbed = embedUtils.createSuccessEmbed('ELO threshold cleared.');
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
-    // Show first image with navigation
-    const images = result.rows;
-    const currentIndex = 0;
-    const image = images[currentIndex];
-    const imageUrl = await storage.getImageUrl(image.s3_key);
-    
-    const embed = embedUtils.createBaseEmbed();
-    const winRate = eloService.calculateWinRate(image.wins, image.losses);
-    const status = image.retired ? '❌ RETIRED' : '✅ ACTIVE';
-    
-    embed.setTitle(`📋 Image #${image.id} — Rank ${currentIndex + 1}/${images.length}`);
-    embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Image Details ]\n` +
-      `\`\`\`\n` +
-      `**Status:** ${status}\n` +
-      `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
-      `**Record:** ${image.wins}W - ${image.losses}L\n` +
-      `**Win Rate:** ${winRate}%\n` +
-      `**Uploader:** <@${image.uploader_id}>`
-    );
-    embed.setThumbnail(imageUrl);
-    embed.setImage(imageUrl);
-    embed.setFooter({ text: `Image ${currentIndex + 1} of ${images.length} | Navigate with buttons ♡` });
-
-    // Navigation buttons
-    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
-    const navButtons = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('image_list_prev')
-          .setLabel('◀ Previous')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(true),
-        new ButtonBuilder()
-          .setCustomId('image_list_next')
-          .setLabel('Next ▶')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(images.length === 1),
-        new ButtonBuilder()
-          .setCustomId('admin_back_image_mgmt')
-          .setLabel('Back to Image Management')
-          .setStyle(ButtonStyle.Primary)
-      );
-
-    await interaction.followUp({ 
-      embeds: [embed], 
-      components: [navButtons],
-      flags: MessageFlags.Ephemeral,
-      content: `__IMAGE_LIST_DATA:${JSON.stringify(images.map(i => i.id))}:0__`
-    });
+    // Refresh settings page
+    const config = await adminConfig.getOrCreateConfig(guildId);
+    await adminConfig.handleRetirementSettings(interaction, config);
   } catch (error) {
-    console.error('Error listing images:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to list images.');
+    console.error('Error clearing ELO threshold:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to clear ELO threshold.');
     await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
-async function handleImageListNavigation(interaction, direction) {
-  await interaction.deferUpdate();
-
-  try {
-    const content = interaction.message.content;
-    const match = content.match(/__IMAGE_LIST_DATA:(.+?):(\d+)__/);
-    
-    if (!match) throw new Error('Navigation data not found');
-
-    const imageIds = JSON.parse(match[1]);
-    let currentIndex = parseInt(match[2]);
-
-    if (direction === 'next') currentIndex++;
-    if (direction === 'prev') currentIndex--;
-
-    // Get images
-    const result = await database.query(
-      `SELECT id, elo, wins, losses, uploader_id, retired, s3_key 
-       FROM images WHERE id = ANY($1) ORDER BY elo DESC`,
-      [imageIds]
-    );
-
-    const images = result.rows;
-    const image = images[currentIndex];
-    const imageUrl = await storage.getImageUrl(image.s3_key);
-    
-    const embed = embedUtils.createBaseEmbed();
-    const winRate = eloService.calculateWinRate(image.wins, image.losses);
-    const status = image.retired ? '❌ RETIRED' : '✅ ACTIVE';
-    
-    embed.setTitle(`📋 Image #${image.id} — Rank ${currentIndex + 1}/${images.length}`);
-    embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Image Details ]\n` +
-      `\`\`\`\n` +
-      `**Status:** ${status}\n` +
-      `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
-      `**Record:** ${image.wins}W - ${image.losses}L\n` +
-      `**Win Rate:** ${winRate}%\n` +
-      `**Uploader:** <@${image.uploader_id}>`
-    );
-    embed.setThumbnail(imageUrl);
-    embed.setImage(imageUrl);
-    embed.setFooter({ text: `Image ${currentIndex + 1} of ${images.length} | Navigate with buttons ♡` });
-
-    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
-    const navButtons = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('image_list_prev')
-          .setLabel('◀ Previous')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(currentIndex === 0),
-        new ButtonBuilder()
-          .setCustomId('image_list_next')
-          .setLabel('Next ▶')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(currentIndex === images.length - 1),
-        new ButtonBuilder()
-          .setCustomId('admin_back_image_mgmt')
-          .setLabel('Back to Image Management')
-          .setStyle(ButtonStyle.Primary)
-      );
-
-    await interaction.editReply({
-      embeds: [embed],
-      components: [navButtons],
-      content: `__IMAGE_LIST_DATA:${JSON.stringify(imageIds)}:${currentIndex}__`
-    });
-  } catch (error) {
-    console.error('Error navigating images:', error);
-  }
-}
-
-// NEW HELPER FUNCTIONS FOR PART 2 FEATURES
-
+// Helper function: Clear log channel
 async function handleClearLogChannel(interaction) {
   await interaction.deferUpdate();
 
@@ -734,7 +701,7 @@ async function handleClearLogChannel(interaction) {
       [guildId]
     );
 
-    const successEmbed = embedUtils.createSuccessEmbed('Log channel disabled. No more automatic log messages will be sent.');
+    const successEmbed = embedUtils.createSuccessEmbed('Log channel disabled.');
     await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     // Refresh settings page
@@ -747,194 +714,174 @@ async function handleClearLogChannel(interaction) {
   }
 }
 
-async function handleRetireImageDirect(interaction, imageId) {
-  await interaction.deferUpdate();
-
-  try {
-    const guildId = interaction.guild.id;
-
-    const checkResult = await database.query(
-      'SELECT retired FROM images WHERE guild_id = $1 AND id = $2',
-      [guildId, imageId]
-    );
-
-    if (checkResult.rows.length === 0) {
-      const errorEmbed = embedUtils.createErrorEmbed('Image not found.');
-      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-      return;
-    }
-
-    if (checkResult.rows[0].retired) {
-      const errorEmbed = embedUtils.createErrorEmbed('This image is already retired.');
-      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-      return;
-    }
-
-    await database.query(
-      'UPDATE images SET retired = true, retired_at = NOW() WHERE guild_id = $1 AND id = $2',
-      [guildId, imageId]
-    );
-
-    await database.query(
-      `INSERT INTO logs (guild_id, action_type, admin_id, details)
-       VALUES ($1, 'image_retired', $2, $3)`,
-      [guildId, interaction.user.id, JSON.stringify({ imageId, method: 'manual' })]
-    );
-
-    const successEmbed = embedUtils.createSuccessEmbed(`Image #${imageId} has been retired.`);
-    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
-
-    await imageManagement.viewImage(interaction, imageId);
-  } catch (error) {
-    console.error('Error retiring image:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to retire image.');
-    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-  }
-}
-
-async function handleUnretireImageDirect(interaction, imageId) {
-  await interaction.deferUpdate();
-
-  try {
-    const guildId = interaction.guild.id;
-
-    const checkResult = await database.query(
-      'SELECT retired FROM images WHERE guild_id = $1 AND id = $2',
-      [guildId, imageId]
-    );
-
-    if (checkResult.rows.length === 0) {
-      const errorEmbed = embedUtils.createErrorEmbed('Image not found.');
-      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-      return;
-    }
-
-    if (!checkResult.rows[0].retired) {
-      const errorEmbed = embedUtils.createErrorEmbed('This image is not retired.');
-      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-      return;
-    }
-
-    await database.query(
-      'UPDATE images SET retired = false, retired_at = NULL WHERE guild_id = $1 AND id = $2',
-      [guildId, imageId]
-    );
-
-    await database.query(
-      `INSERT INTO logs (guild_id, action_type, admin_id, details)
-       VALUES ($1, 'image_unretired', $2, $3)`,
-      [guildId, interaction.user.id, JSON.stringify({ imageId })]
-    );
-
-    const successEmbed = embedUtils.createSuccessEmbed(`Image #${imageId} has been unretired and is now active again.`);
-    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
-
-    await imageManagement.viewImage(interaction, imageId);
-  } catch (error) {
-    console.error('Error unretiring image:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to unretire image.');
-    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-  }
-}
-
-async function handleDeleteImageDirect(interaction, imageId) {
-  await interaction.deferUpdate();
-
-  try {
-    const guildId = interaction.guild.id;
-
-    const imageResult = await database.query(
-      'SELECT s3_key FROM images WHERE guild_id = $1 AND id = $2',
-      [guildId, imageId]
-    );
-
-    if (imageResult.rows.length === 0) {
-      const errorEmbed = embedUtils.createErrorEmbed('Image not found.');
-      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
-      return;
-    }
-
-    const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
-    
-    const embed = embedUtils.createBaseEmbed();
-    embed.setColor(0xFF0000);
-    embed.setTitle('⚠️ Confirm Permanent Deletion');
-    embed.setDescription(
-      `**Are you absolutely sure you want to delete image #${imageId}?**\n\n` +
-      `This action will:\n` +
-      `• Permanently delete the image from S3 storage\n` +
-      `• Remove all database records\n` +
-      `• Delete all associated votes and captions\n` +
-      `• Cannot be undone\n\n` +
-      `**Think carefully before proceeding!**`
-    );
-
-    const buttons = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`confirm_delete_${imageId}`)
-          .setLabel('Yes, Delete Forever')
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId('cancel_delete')
-          .setLabel('Cancel')
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-    await interaction.followUp({ 
-      embeds: [embed], 
-      components: [buttons],
+// NEW GALLERY HANDLER
+async function handleGalleryActions(interaction) {
+  const customId = interaction.customId;
+  const content = interaction.message.content;
+  const match = content.match(/__GALLERY:(.+?)__/);
+  
+  if (!match) {
+    await interaction.reply({ 
+      content: 'Session expired. Please start over.', 
       flags: MessageFlags.Ephemeral 
     });
-  } catch (error) {
-    console.error('Error in delete confirmation:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to show delete confirmation.');
-    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+    return;
   }
-}
+  
+  const state = JSON.parse(match[1]);
+  let { index, sortBy, filterActive, imageId } = state;
 
-async function handleConfirmDelete(interaction, imageId) {
-  await interaction.deferUpdate();
-
-  try {
+  if (customId === 'gallery_first') {
+    await imageManagement.showGallery(interaction, 0, sortBy, filterActive);
+    return;
+  }
+  
+  if (customId === 'gallery_prev') {
+    await imageManagement.showGallery(interaction, index - 1, sortBy, filterActive);
+    return;
+  }
+  
+  if (customId === 'gallery_next') {
+    await imageManagement.showGallery(interaction, index + 1, sortBy, filterActive);
+    return;
+  }
+  
+  if (customId === 'gallery_last') {
     const guildId = interaction.guild.id;
+    let filterClause = '';
+    if (filterActive === 'active') filterClause = 'AND retired = false';
+    if (filterActive === 'retired') filterClause = 'AND retired = true';
+    
+    const result = await database.query(
+      `SELECT COUNT(*) as total FROM images WHERE guild_id = $1 ${filterClause}`,
+      [guildId]
+    );
+    const total = parseInt(result.rows[0].total);
+    await imageManagement.showGallery(interaction, total - 1, sortBy, filterActive);
+    return;
+  }
 
-    const imageResult = await database.query(
+  if (customId === 'gallery_toggle_retire') {
+    await interaction.deferUpdate();
+    
+    const guildId = interaction.guild.id;
+    
+    const result = await database.query(
+      'SELECT retired FROM images WHERE guild_id = $1 AND id = $2',
+      [guildId, imageId]
+    );
+    
+    const isRetired = result.rows[0].retired;
+    
+    if (isRetired) {
+      await database.query(
+        'UPDATE images SET retired = false, retired_at = NULL WHERE guild_id = $1 AND id = $2',
+        [guildId, imageId]
+      );
+      
+      await database.query(
+        `INSERT INTO logs (guild_id, action_type, admin_id, details)
+         VALUES ($1, 'image_unretired', $2, $3)`,
+        [guildId, interaction.user.id, JSON.stringify({ imageId })]
+      );
+      
+      const embed = embedUtils.createSuccessEmbed(`✅ Image #${imageId} unretired!`);
+      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    } else {
+      await database.query(
+        'UPDATE images SET retired = true, retired_at = NOW() WHERE guild_id = $1 AND id = $2',
+        [guildId, imageId]
+      );
+      
+      await database.query(
+        `INSERT INTO logs (guild_id, action_type, admin_id, details)
+         VALUES ($1, 'image_retired', $2, $3)`,
+        [guildId, interaction.user.id, JSON.stringify({ imageId, method: 'manual' })]
+      );
+      
+      const embed = embedUtils.createSuccessEmbed(`✅ Image #${imageId} retired!`);
+      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+    
+    await imageManagement.showGallery(interaction, index, sortBy, filterActive);
+    return;
+  }
+
+  if (customId === 'gallery_delete_confirm') {
+    await imageManagement.showDeleteConfirmation(interaction, imageId, state);
+    return;
+  }
+
+  if (customId === 'gallery_delete_yes') {
+    await interaction.deferUpdate();
+    
+    const guildId = interaction.guild.id;
+    
+    const result = await database.query(
       'SELECT s3_key FROM images WHERE guild_id = $1 AND id = $2',
       [guildId, imageId]
     );
-
-    if (imageResult.rows.length === 0) {
-      const errorEmbed = embedUtils.createErrorEmbed('Image not found.');
-      await interaction.editReply({ embeds: [errorEmbed], components: [] });
+    
+    if (result.rows.length === 0) {
+      const embed = embedUtils.createErrorEmbed('Image not found.');
+      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
       return;
     }
-
-    const s3Key = imageResult.rows[0].s3_key;
-
+    
+    const s3Key = result.rows[0].s3_key;
+    
     await storage.deleteImage(s3Key);
-
+    
     await database.query(
       'DELETE FROM images WHERE guild_id = $1 AND id = $2',
       [guildId, imageId]
     );
-
+    
     await database.query(
       `INSERT INTO logs (guild_id, action_type, admin_id, details)
        VALUES ($1, 'image_deleted', $2, $3)`,
       [guildId, interaction.user.id, JSON.stringify({ imageId, s3Key })]
     );
+    
+    const embed = embedUtils.createSuccessEmbed(`🔥 Image #${imageId} permanently deleted!`);
+    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    
+    const newIndex = index > 0 ? index - 1 : 0;
+    await imageManagement.showGallery(interaction, newIndex, sortBy, filterActive);
+    return;
+  }
 
-    const successEmbed = embedUtils.createSuccessEmbed(
-      `Image #${imageId} has been permanently deleted.\n\n` +
-      `The image has been removed from S3 storage and all database records have been deleted.`
+  if (customId === 'gallery_delete_cancel') {
+    await imageManagement.showGallery(interaction, index, sortBy, filterActive);
+    return;
+  }
+
+  if (customId === 'gallery_jump') {
+    const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = await import('discord.js');
+    const modal = new ModalBuilder()
+      .setCustomId('modal_gallery_jump')
+      .setTitle('Jump to Image');
+    
+    const input = new TextInputBuilder()
+      .setCustomId('jump_index')
+      .setLabel('Image number')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Enter 1 to jump to first image')
+      .setRequired(true);
+    
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (customId === 'gallery_exit') {
+    const guildId = interaction.guild.id;
+    const config = await database.query(
+      'SELECT * FROM guild_config WHERE guild_id = $1',
+      [guildId]
     );
-
-    await interaction.editReply({ embeds: [successEmbed], components: [] });
-  } catch (error) {
-    console.error('Error deleting image:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to delete image: ' + error.message);
-    await interaction.editReply({ embeds: [errorEmbed], components: [] });
+    await imageManagement.showImageManagement(interaction, config.rows[0]);
+    return;
   }
 }
 
