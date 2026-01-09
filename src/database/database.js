@@ -12,6 +12,7 @@ class Database {
   async initialize() {
     try {
       await this.createTables();
+      await this.runMigrations();
       console.log('✅ Database initialized successfully');
     } catch (error) {
       console.error('❌ Database initialization failed:', error);
@@ -29,6 +30,7 @@ class Database {
         CREATE TABLE IF NOT EXISTS guild_config (
           guild_id VARCHAR(20) PRIMARY KEY,
           duel_channel_id VARCHAR(20),
+          log_channel_id VARCHAR(20),
           import_channel_ids TEXT[],
           duel_duration INTEGER DEFAULT 1800,
           duel_interval INTEGER DEFAULT 1800,
@@ -163,12 +165,33 @@ class Database {
         CREATE INDEX IF NOT EXISTS idx_users_guild ON users(guild_id, user_id);
         CREATE INDEX IF NOT EXISTS idx_duels_guild ON duels(guild_id, ended_at DESC);
         CREATE INDEX IF NOT EXISTS idx_votes_duel ON votes(duel_id, user_id);
+        CREATE INDEX IF NOT EXISTS idx_guild_config_log_channel ON guild_config(log_channel_id) WHERE log_channel_id IS NOT NULL;
       `);
 
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async runMigrations() {
+    const client = await this.pool.connect();
+    try {
+      console.log('🔄 Running database migrations...');
+
+      // Migration: Add log_channel_id if it doesn't exist (for existing databases)
+      await client.query(`
+        ALTER TABLE guild_config 
+        ADD COLUMN IF NOT EXISTS log_channel_id VARCHAR(20)
+      `);
+
+      console.log('✅ Migrations completed successfully');
+    } catch (error) {
+      console.error('❌ Migration failed:', error);
+      // Don't throw - migrations might fail if already applied
     } finally {
       client.release();
     }
