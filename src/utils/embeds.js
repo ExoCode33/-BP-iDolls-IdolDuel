@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import eloService from '../services/elo.js';
+import eloService from '../services/elo/calculator.js';
 
 const PINK_COLOR = 0xFF69B4;
 const CYAN_COLOR = 0x00D4FF;
@@ -116,11 +116,11 @@ class EmbedUtils {
     const loserPercent = 100 - winnerPercent;
 
     const eloChange = results.eloChanges
-      ? ` *+${results.eloChanges.winnerEloChange}*`
+      ? ` *+${results.eloChanges.winnerChange}*`
       : '';
 
     const eloLoss = results.eloChanges
-      ? ` *${results.eloChanges.loserEloChange}*`
+      ? ` *${results.eloChanges.loserChange}*`
       : '';
 
     // Create visual percentage bars (20 chars wide)
@@ -168,37 +168,32 @@ class EmbedUtils {
     const embed = this.createBaseEmbed();
     
     const winRate = eloService.calculateWinRate(topImage?.wins || 0, topImage?.losses || 0);
-    const rankName = eloService.getRankName(user.elo);
+    const rankEmoji = eloService.getRankEmoji(topImage?.elo || 1000);
 
-    embed.setTitle(`━━━━━ ${rankName} Profile ━━━━━`);
+    embed.setTitle(`━━━━━ Profile ━━━━━`);
     embed.setDescription(
-      `**User Stats**\n` +
-      `${eloService.getRankEmoji(user.elo)} **ELO:** \`${user.elo}\`\n` +
-      `🔥 **Current Streak:** ${user.current_streak}\n` +
-      `⭐ **Best Streak:** ${user.best_streak}\n` +
-      `🗳️ **Total Votes Cast:** ${user.total_votes_cast}\n`
+      `**Your Image Stats**\n`
     );
 
     if (topImage) {
       embed.addFields({
-        name: '━━━━━━━━━━━━━━━━━━',
-        value: '** **',
-        inline: false
-      });
-      
-      embed.addFields({
         name: '🏆 Top Image Stats',
         value:
-          `**ELO:** \`${topImage.elo}\` ${eloService.getRankEmoji(topImage.elo)}\n` +
+          `${rankEmoji} **ELO:** \`${topImage.elo}\`\n` +
           `**Record:** ${topImage.wins}W - ${topImage.losses}L\n` +
-          `**Win Rate:** ${winRate}%\n` +
-          `**Streak:** ${topImage.current_streak} 🔥`,
+          `**Win Rate:** ${winRate}%`,
         inline: false
       });
 
       if (topImageUrl) {
         embed.setThumbnail(topImageUrl);
       }
+    } else {
+      embed.setDescription(
+        `**Your Image Stats**\n\n` +
+        `You haven't uploaded any images yet!\n` +
+        `Post images in the image channel to get started. ♡`
+      );
     }
 
     embed.setFooter({ text: 'Keep dueling to improve! >^u^<' });
@@ -212,25 +207,26 @@ class EmbedUtils {
    * @param {number} page - Current page
    * @returns {EmbedBuilder}
    */
-  createLeaderboardEmbed(users, page = 1) {
+  createLeaderboardEmbed(images, page = 1) {
     const embed = this.createBaseEmbed();
 
     embed.setTitle('━━━━━ 🏆 Leaderboard 🏆 ━━━━━');
     embed.setDescription(
-      `**Top ${users.length} Users by ELO**\n` +
+      `**Top ${images.length} Images by ELO**\n` +
       `━━━━━━━━━━━━━━━━━━━\n`
     );
 
     const medals = ['🥇', '🥈', '🥉'];
     
-    users.forEach((user, index) => {
+    images.forEach((image, index) => {
       const position = (page - 1) * 15 + index + 1;
       const medal = index < 3 ? medals[index] + ' ' : `\`${position}.\` `;
-      const rankEmoji = eloService.getRankEmoji(user.elo);
+      const rankEmoji = eloService.getRankEmoji(image.elo);
+      const winRate = eloService.calculateWinRate(image.wins, image.losses);
       
       embed.addFields({
-        name: `${medal}<@${user.user_id}>`,
-        value: `${rankEmoji} \`${user.elo}\` ELO  •  ${user.current_streak} 🔥 streak`,
+        name: `${medal}Image #${image.id}`,
+        value: `${rankEmoji} \`${image.elo}\` ELO  •  ${image.wins}W-${image.losses}L (${winRate}%)`,
         inline: false
       });
     });
@@ -262,40 +258,12 @@ class EmbedUtils {
       `━━━━━━━━━━━━━━━━━━━\n` +
       `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
       `**Record:** ${image.wins}W - ${image.losses}L\n` +
-      `**Win Rate:** ${winRate}%\n` +
-      `**Current Streak:** ${image.current_streak} 🔥\n` +
-      `**Best Streak:** ${image.best_streak} ⭐\n` +
-      `**Total Votes:** ${image.total_votes_received}\n\n` +
+      `**Win Rate:** ${winRate}%\n\n` +
       `**Uploader:** <@${image.uploader_id}>`
     );
 
     embed.setImage(imageUrl);
     embed.setFooter({ text: `Image ${position} of ${images.length} | Navigate with buttons ♡` });
-
-    return embed;
-  }
-
-  /**
-   * Create admin config embed (more concise)
-   * @param {Object} config - Guild configuration
-   * @returns {EmbedBuilder}
-   */
-  createAdminConfigEmbed(config) {
-    const embed = this.createBaseEmbed();
-
-    embed.setTitle('━━━━━ ⚙️ Admin Panel ⚙️ ━━━━━');
-    embed.setDescription(
-      `**Quick Settings Overview**\n` +
-      `━━━━━━━━━━━━━━━━━━━\n` +
-      `**Channel:** ${config.duel_channel_id ? `<#${config.duel_channel_id}>` : '❌ Not set'}\n` +
-      `**Duration:** ${config.duel_duration / 60}min  •  **Interval:** ${config.duel_interval / 60}min\n` +
-      `**Starting ELO:** ${config.starting_elo}  •  **K-Factor:** ${config.k_factor}\n` +
-      `**Min Votes:** ${config.min_votes}  •  **Retirement:** ${config.losses_before_retirement} losses\n` +
-      `**Status:** ${config.duel_active ? '✅ Active' : '❌ Inactive'}  •  **Season:** ${config.season_number}\n\n` +
-      `*Use dropdown below to configure*`
-    );
-
-    embed.setFooter({ text: 'Select a section to manage ♡' });
 
     return embed;
   }
@@ -330,39 +298,6 @@ class EmbedUtils {
     embed.setTitle('━━━━━ ✅ Success ━━━━━');
     embed.setDescription(`${message}\n\n*>^u^< ♡*`);
 
-    return embed;
-  }
-
-  /**
-   * Create admin log embed for system events
-   * @param {Object} logEntry - Log entry data
-   * @returns {EmbedBuilder}
-   */
-  createAdminLogEmbed(logEntry) {
-    const embed = this.createBaseEmbed();
-    
-    const typeColors = {
-      'duel_started': 0x00FF88,
-      'duel_ended': 0x5865F2,
-      'duel_skipped': 0xFFAA00,
-      'duel_error': 0xFF6B6B,
-      'image_retired': 0xFF69B4,
-      'season_reset': 0xFF00FF,
-      'system_reset': 0xFF0000
-    };
-    
-    embed.setColor(typeColors[logEntry.action_type] || PINK_COLOR);
-    embed.setTitle(`📋 ${logEntry.action_type.replace(/_/g, ' ').toUpperCase()}`);
-    
-    const details = typeof logEntry.details === 'string' 
-      ? JSON.parse(logEntry.details) 
-      : logEntry.details;
-    
-    embed.setDescription(
-      `**Timestamp:** <t:${Math.floor(new Date(logEntry.created_at).getTime() / 1000)}:F>\n` +
-      `**Details:**\n\`\`\`json\n${JSON.stringify(details, null, 2)}\`\`\``
-    );
-    
     return embed;
   }
 }
