@@ -497,7 +497,7 @@ async function handleEloThresholdModal(interaction) {
   await interaction.deferUpdate();
 
   try {
-    const threshold = parseInt(interaction.fields.getTextInputValue('elo_threshold_input'));
+    const threshold = parseInt(interaction.fields.getTextInputValue('elo_threshold'));
     
     if (isNaN(threshold)) {
       throw new Error('Invalid ELO threshold');
@@ -750,7 +750,14 @@ async function handleLogChannelModal(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const channelId = interaction.fields.getTextInputValue('log_channel_input').trim();
+    let channelId = interaction.fields.getTextInputValue('log_channel_input').trim();
+    
+    // Extract channel ID from URL if user pasted full URL
+    // Format: https://discord.com/channels/GUILD_ID/CHANNEL_ID
+    if (channelId.includes('discord.com/channels/')) {
+      const parts = channelId.split('/');
+      channelId = parts[parts.length - 1];
+    }
     
     // Verify channel exists
     const channel = await interaction.guild.channels.fetch(channelId);
@@ -775,7 +782,7 @@ async function handleLogChannelModal(interaction) {
     await interaction.editReply({ embeds: [successEmbed] });
   } catch (error) {
     console.error('Error setting log channel:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Invalid channel ID. Please make sure the channel exists.');
+    const errorEmbed = embedUtils.createErrorEmbed('Invalid channel ID or URL. Please use a channel ID or right-click the channel and select "Copy Link".');
     await interaction.editReply({ embeds: [errorEmbed] });
   }
 }
