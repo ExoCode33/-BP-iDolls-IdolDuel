@@ -9,7 +9,7 @@ import {
 } from 'discord.js';
 import database from '../../database/database.js';
 import redis from '../../database/redis.js';
-import storage from '../../services/storage.js';
+import storage from '../../services/image/storage.js';
 import embedUtils from '../../utils/embeds.js';
 import { S3Client, ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 
@@ -27,10 +27,8 @@ export default {
       `**This operation will permanently remove:**\n\n` +
       `**PostgreSQL Database:**\n` +
       `• All image records and metadata\n` +
-      `• All user profiles and statistics\n` +
       `• All duel history and results\n` +
-      `• All votes and captions\n` +
-      `• All activity logs\n` +
+      `• All votes\n` +
       `• Guild configuration settings\n\n` +
       `**S3 Storage Bucket:**\n` +
       `• All uploaded image files\n` +
@@ -94,7 +92,7 @@ export default {
 
   async executeReset(interaction, password, confirmation) {
     // Verify password
-    if (password !== process.env.SYSTEM_RESET_PASSWORD) {
+    if (password !== process.env.SEASON_RESET_PASSWORD) {
       const errorEmbed = embedUtils.createErrorEmbed('Invalid password. System reset cancelled.');
       await interaction.editReply({ embeds: [errorEmbed], components: [] });
       return;
@@ -182,13 +180,6 @@ export default {
 
       await interaction.editReply({ embeds: [successEmbed] });
 
-      // Log the reset
-      await database.query(
-        `INSERT INTO logs (guild_id, action_type, admin_id, details)
-         VALUES ($1, 'system_reset', $2, $3)`,
-        [interaction.guild.id, interaction.user.id, JSON.stringify({ timestamp: new Date() })]
-      );
-
       console.log(`🔄 System reset completed by ${interaction.user.tag}`);
 
     } catch (error) {
@@ -228,12 +219,9 @@ export default {
     // Drop all tables in correct order (respecting foreign keys)
     const tables = [
       'votes',
-      'captions',
       'active_duels',
       'duels',
       'images',
-      'users',
-      'logs',
       'guild_config'
     ];
 
