@@ -2,6 +2,7 @@ import database from '../database/database.js';
 import storage from '../services/storage.js';
 import embedUtils from '../utils/embeds.js';
 import adminConfig from '../commands/admin/config.js';
+import imageManagement from '../commands/admin/imageManagement.js';
 import eloService from '../services/elo.js';
 import duelManager from '../services/duelManager.js';
 import { MessageFlags } from 'discord.js';
@@ -72,6 +73,22 @@ export async function handleModalSubmit(interaction) {
 
   if (modalId === 'modal_system_reset') {
     await handleSystemResetModal(interaction);
+    return;
+  }
+
+  // NEW: Image management modals
+  if (modalId === 'modal_filter_images') {
+    const filters = {
+      eloMin: interaction.fields.getTextInputValue('elo_min'),
+      eloMax: interaction.fields.getTextInputValue('elo_max'),
+      uploaderId: interaction.fields.getTextInputValue('uploader_id')
+    };
+    await imageManagement.handleFilterResults(interaction, filters);
+    return;
+  }
+
+  if (modalId === 'modal_bulk_retire') {
+    await handleBulkRetireModal(interaction);
     return;
   }
 }
@@ -342,7 +359,7 @@ async function importImagesFromChannels(client, guildId, channelIds) {
       let hasMore = true;
       let messageCount = 0;
 
-      while (hasMore && messageCount < 100) { // Limit to 100 messages per channel
+      while (hasMore && messageCount < 100) {
         const options = { limit: 100 };
         if (lastMessageId) {
           options.before = lastMessageId;
@@ -359,14 +376,11 @@ async function importImagesFromChannels(client, guildId, channelIds) {
           messageCount++;
           
           for (const attachment of message.attachments.values()) {
-            // Check if supported format
             if (!storage.isSupportedFormat(attachment.name)) continue;
 
             try {
-              // Download and upload to S3
               const { s3Key, hash } = await storage.downloadAndUpload(attachment.url, guildId);
 
-              // Check if already exists
               const existing = await database.query(
                 'SELECT id FROM images WHERE guild_id = $1 AND image_hash = $2',
                 [guildId, hash]
@@ -377,14 +391,12 @@ async function importImagesFromChannels(client, guildId, channelIds) {
                 continue;
               }
 
-              // Get config for starting ELO
               const config = await database.query(
                 'SELECT starting_elo FROM guild_config WHERE guild_id = $1',
                 [guildId]
               );
               const startingElo = config.rows[0]?.starting_elo || 1000;
 
-              // Insert into database
               await database.query(
                 `INSERT INTO images (guild_id, image_hash, s3_key, discord_message_id, discord_channel_id, uploader_id, elo)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -412,6 +424,13 @@ async function importImagesFromChannels(client, guildId, channelIds) {
   }
 
   console.log(`Import complete: ${imported} imported, ${skipped} skipped, ${errors} errors`);
+  
+  // Log import event
+  await database.query(
+    `INSERT INTO logs (guild_id, action_type, details)
+     VALUES ($1, 'images_imported', $2)`,
+    [guildId, JSON.stringify({ imported, skipped, errors, channelIds })]
+  );
 }
 
 async function handleEloThresholdModal(interaction) {
@@ -424,8 +443,6 @@ async function handleEloThresholdModal(interaction) {
       throw new Error('Invalid ELO threshold');
     }
 
-    // Instead of deleting, we'll retire images and optionally clean up old references
-    // First, get IDs of images to retire
     const imagesToRetire = await database.query(
       `SELECT id FROM images WHERE guild_id = $1 AND elo < $2 AND retired = false`,
       [interaction.guild.id, threshold]
@@ -436,13 +453,12 @@ async function handleEloThresholdModal(interaction) {
       await interaction.followUp({ embeds: [infoEmbed], flags: MessageFlags.Ephemeral });
       
       const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
-      await adminConfig.handleImageManagement(interaction, config);
+      await imageManagement.showImageManagement(interaction, config);
       return;
     }
 
     const imageIds = imagesToRetire.rows.map(row => row.id);
 
-    // Retire the images instead of deleting them
     await database.query(
       `UPDATE images SET retired = true, retired_at = NOW() 
        WHERE guild_id = $1 AND elo < $2 AND retired = false`,
@@ -458,7 +474,7 @@ async function handleEloThresholdModal(interaction) {
     await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
 
     const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
-    await adminConfig.handleImageManagement(interaction, config);
+    await imageManagement.showImageManagement(interaction, config);
   } catch (error) {
     console.error('Error clearing images:', error);
     const errorEmbed = embedUtils.createErrorEmbed('Failed to retire images. Error: ' + error.message);
@@ -479,7 +495,6 @@ async function handleSeasonResetModal(interaction) {
     const guildId = interaction.guild.id;
     const config = await adminConfig.getOrCreateConfig(guildId);
 
-    // Soft reset all user ELOs
     await database.query(
       `UPDATE users 
        SET elo = (elo + $1) / 2, current_streak = 0
@@ -487,7 +502,6 @@ async function handleSeasonResetModal(interaction) {
       [config.starting_elo, guildId]
     );
 
-    // Soft reset all image ELOs
     await database.query(
       `UPDATE images 
        SET elo = (elo + $1) / 2, current_streak = 0
@@ -495,13 +509,11 @@ async function handleSeasonResetModal(interaction) {
       [config.starting_elo, guildId]
     );
 
-    // Increment season number
     await database.query(
       'UPDATE guild_config SET season_number = season_number + 1 WHERE guild_id = $1',
       [guildId]
     );
 
-    // Log the reset
     await database.query(
       `INSERT INTO logs (guild_id, action_type, admin_id, details)
        VALUES ($1, 'season_reset', $2, $3)`,
@@ -536,7 +548,6 @@ async function handleAddCaptionModal(interaction) {
     const guildId = interaction.guild.id;
     const userId = interaction.user.id;
 
-    // Get active duel
     const activeDuel = await duelManager.getActiveDuel(guildId);
     if (!activeDuel) {
       throw new Error('No active duel');
@@ -544,7 +555,6 @@ async function handleAddCaptionModal(interaction) {
 
     const imageId = imageChoice === 'A' ? activeDuel.image1.id : activeDuel.image2.id;
 
-    // Check if user already added caption to THIS image in THIS DUEL
     const existing = await database.query(
       `SELECT c.id FROM captions c
        WHERE c.image_id = $1 AND c.user_id = $2 
@@ -556,7 +566,6 @@ async function handleAddCaptionModal(interaction) {
       throw new Error('Already added caption');
     }
 
-    // Check caption count for image IN THIS DUEL (max 3)
     const captionCount = await database.query(
       `SELECT COUNT(*) FROM captions c
        WHERE c.image_id = $1
@@ -568,7 +577,6 @@ async function handleAddCaptionModal(interaction) {
       throw new Error('Max captions reached');
     }
 
-    // Add caption
     await database.query(
       'INSERT INTO captions (image_id, user_id, caption) VALUES ($1, $2, $3)',
       [imageId, userId, caption]
@@ -577,7 +585,6 @@ async function handleAddCaptionModal(interaction) {
     const successEmbed = embedUtils.createSuccessEmbed('Caption added!');
     await interaction.editReply({ embeds: [successEmbed] });
 
-    // Update the duel message with new caption
     if (interaction.client.duelScheduler) {
       await interaction.client.duelScheduler.updateDuelMessage(guildId);
     }
@@ -608,6 +615,72 @@ async function handleSystemResetModal(interaction) {
     console.error('Error in system reset:', error);
     const errorEmbed = embedUtils.createErrorEmbed('System reset failed: ' + error.message);
     await interaction.editReply({ embeds: [errorEmbed], components: [] });
+  }
+}
+
+// NEW: Handle bulk retire modal
+async function handleBulkRetireModal(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const threshold = parseInt(interaction.fields.getTextInputValue('elo_threshold'));
+    const confirmText = interaction.fields.getTextInputValue('confirm_text');
+    
+    if (confirmText !== 'CONFIRM') {
+      const errorEmbed = embedUtils.createErrorEmbed('You must type CONFIRM to proceed.');
+      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+      return;
+    }
+    
+    if (isNaN(threshold)) {
+      const errorEmbed = embedUtils.createErrorEmbed('Invalid ELO threshold.');
+      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    const guildId = interaction.guild.id;
+    
+    // Get count first
+    const countResult = await database.query(
+      'SELECT COUNT(*) as total FROM images WHERE guild_id = $1 AND elo < $2 AND retired = false',
+      [guildId, threshold]
+    );
+    
+    const count = parseInt(countResult.rows[0].total);
+    
+    if (count === 0) {
+      const infoEmbed = embedUtils.createSuccessEmbed(`No images found with ELO below ${threshold}.`);
+      await interaction.followUp({ embeds: [infoEmbed], flags: MessageFlags.Ephemeral });
+      
+      const config = await adminConfig.getOrCreateConfig(guildId);
+      await imageManagement.showImageManagement(interaction, config);
+      return;
+    }
+    
+    // Retire them
+    await database.query(
+      'UPDATE images SET retired = true, retired_at = NOW() WHERE guild_id = $1 AND elo < $2 AND retired = false',
+      [guildId, threshold]
+    );
+    
+    // Log the action
+    await database.query(
+      `INSERT INTO logs (guild_id, action_type, admin_id, details)
+       VALUES ($1, 'bulk_retire', $2, $3)`,
+      [guildId, interaction.user.id, JSON.stringify({ threshold, count })]
+    );
+    
+    const successEmbed = embedUtils.createSuccessEmbed(
+      `Retired ${count} image(s) with ELO below ${threshold}!`
+    );
+    await interaction.followUp({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
+    
+    const config = await adminConfig.getOrCreateConfig(guildId);
+    await imageManagement.showImageManagement(interaction, config);
+  } catch (error) {
+    console.error('Error in bulk retire:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to retire images.');
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
 }
 
