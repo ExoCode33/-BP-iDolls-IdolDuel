@@ -1,24 +1,22 @@
 /**
- * Enhanced Interaction Handler
- * Auto-deletes ephemeral messages after 3 seconds
- * Properly handles ephemeral admin panel refreshes
+ * Complete Interaction Handler
+ * Includes retirement settings, image browser, and system reset
  */
 
 import database from '../database/database.js';
 import duelManager from '../services/duel/manager.js';
 import importer from '../services/image/importer.js';
+import storage from '../services/image/storage.js';
 import embedUtils from '../utils/embeds.js';
-import adminCommand from '../commands/admin/admin.js';
-import { MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from 'discord.js';
+import systemReset from '../commands/admin/systemReset.js';
+import { MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 export async function handleInteractions(interaction) {
-  // Button interactions
   if (interaction.isButton()) {
     await handleButton(interaction);
     return;
   }
 
-  // Modal submissions
   if (interaction.isModalSubmit()) {
     await handleModal(interaction);
     return;
@@ -33,33 +31,9 @@ async function autoDeleteEphemeral(interaction, delay = 3000) {
     try {
       await interaction.deleteReply();
     } catch (error) {
-      // Message already deleted or interaction expired
+      // Silently fail
     }
   }, delay);
-}
-
-/**
- * Refresh the admin panel for the user
- */
-async function refreshAdminPanel(interaction) {
-  try {
-    // Since the admin panel is ephemeral, we need to send a fresh one
-    // We'll edit the original interaction message (the panel itself)
-    
-    // Get the original message from the button/modal that was clicked
-    const originalInteraction = interaction.message ? 
-      { 
-        guild: interaction.guild,
-        editReply: async (data) => await interaction.message.edit(data)
-      } : null;
-    
-    if (originalInteraction) {
-      await adminCommand.showAdminPanel(originalInteraction, true);
-    }
-  } catch (error) {
-    console.error('Error refreshing admin panel:', error.message);
-    // Silently fail - user will see updated values when they reopen /admin
-  }
 }
 
 /**
@@ -71,6 +45,28 @@ async function handleButton(interaction) {
   // Vote buttons
   if (customId.startsWith('vote_')) {
     await handleVote(interaction);
+    return;
+  }
+
+  // Image browser navigation
+  if (customId.startsWith('browse_')) {
+    await handleBrowseNavigation(interaction);
+    return;
+  }
+
+  // Image actions
+  if (customId.startsWith('image_delete_')) {
+    await handleImageDelete(interaction);
+    return;
+  }
+
+  if (customId.startsWith('image_retire_')) {
+    await handleImageRetire(interaction);
+    return;
+  }
+
+  if (customId.startsWith('image_unretire_')) {
+    await handleImageUnretire(interaction);
     return;
   }
 
@@ -111,8 +107,37 @@ async function handleButton(interaction) {
     return;
   }
 
+  if (customId === 'admin_edit_retirement') {
+    await showRetirementModal(interaction);
+    return;
+  }
+
   if (customId === 'admin_import_images') {
     await showImportModal(interaction);
+    return;
+  }
+
+  // Browse images
+  if (customId === 'admin_browse_images') {
+    await showImageBrowser(interaction);
+    return;
+  }
+
+  // System reset
+  if (customId === 'admin_system_reset') {
+    await systemReset.showResetWarning(interaction);
+    return;
+  }
+
+  if (customId === 'confirm_system_reset') {
+    await systemReset.showPasswordModal(interaction);
+    return;
+  }
+
+  if (customId === 'cancel_system_reset') {
+    const embed = embedUtils.createSuccessEmbed('System reset cancelled.');
+    await interaction.update({ embeds: [embed], components: [] });
+    autoDeleteEphemeral(interaction);
     return;
   }
 }
@@ -133,9 +158,368 @@ async function handleModal(interaction) {
     return;
   }
 
+  if (customId === 'modal_edit_retirement') {
+    await handleRetirementSubmit(interaction);
+    return;
+  }
+
   if (customId === 'modal_import_images') {
     await handleImportSubmit(interaction);
     return;
+  }
+
+  if (customId === 'modal_system_reset') {
+    const password = interaction.fields.getTextInputValue('reset_password');
+    const confirmation = interaction.fields.getTextInputValue('reset_confirmation');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await systemReset.executeReset(interaction, password, confirmation);
+    return;
+  }
+}
+
+/**
+ * Show retirement settings modal
+ */
+async function showRetirementModal(interaction) {
+  const guildId = interaction.guild.id;
+  
+  const config = await database.query(
+    'SELECT retire_after_losses, retire_below_elo FROM guild_config WHERE guild_id = $1',
+    [guildId]
+  );
+
+  const currentLosses = config.rows[0].retire_after_losses || 0;
+  const currentElo = config.rows[0].retire_below_elo || 0;
+
+  const modal = new ModalBuilder()
+    .setCustomId('modal_edit_retirement')
+    .setTitle('Auto-Retirement Settings');
+
+  const lossesInput = new TextInputBuilder()
+    .setCustomId('retire_after_losses')
+    .setLabel('Retire after X losses (0 = disabled)')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('e.g., 5, 10, 15 (0 to disable)')
+    .setValue(currentLosses.toString())
+    .setRequired(true);
+
+  const eloInput = new TextInputBuilder()
+    .setCustomId('retire_below_elo')
+    .setLabel('Retire below X ELO (0 = disabled)')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('e.g., 800, 700, 600 (0 to disable)')
+    .setValue(currentElo.toString())
+    .setRequired(true);
+
+  const noteInput = new TextInputBuilder()
+    .setCustomId('note')
+    .setLabel('Note: You can enable both or just one')
+    .setStyle(TextInputStyle.Paragraph)
+    .setValue('If both enabled: Retire if EITHER condition is met.\nSet both to 0 to disable auto-retirement.')
+    .setRequired(false);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(lossesInput),
+    new ActionRowBuilder().addComponents(eloInput),
+    new ActionRowBuilder().addComponents(noteInput)
+  );
+
+  await interaction.showModal(modal);
+}
+
+/**
+ * Handle retirement modal submit
+ */
+async function handleRetirementSubmit(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    const guildId = interaction.guild.id;
+    const retireAfterLosses = parseInt(interaction.fields.getTextInputValue('retire_after_losses'));
+    const retireBelowElo = parseInt(interaction.fields.getTextInputValue('retire_below_elo'));
+
+    // Validate
+    if (isNaN(retireAfterLosses) || retireAfterLosses < 0) {
+      const embed = embedUtils.createErrorEmbed('Invalid losses value! Must be 0 or greater.');
+      await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
+      return;
+    }
+
+    if (isNaN(retireBelowElo) || retireBelowElo < 0) {
+      const embed = embedUtils.createErrorEmbed('Invalid ELO value! Must be 0 or greater.');
+      await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
+      return;
+    }
+
+    // Update database
+    await database.query(
+      'UPDATE guild_config SET retire_after_losses = $1, retire_below_elo = $2 WHERE guild_id = $3',
+      [retireAfterLosses, retireBelowElo, guildId]
+    );
+
+    // Create success message
+    let message = '✅ Auto-retirement updated!\n\n';
+    
+    if (retireAfterLosses > 0 && retireBelowElo > 0) {
+      message += `Images will retire after:\n• ${retireAfterLosses} losses, OR\n• Falling below ${retireBelowElo} ELO`;
+    } else if (retireAfterLosses > 0) {
+      message += `Images will retire after ${retireAfterLosses} losses`;
+    } else if (retireBelowElo > 0) {
+      message += `Images will retire below ${retireBelowElo} ELO`;
+    } else {
+      message += 'Auto-retirement disabled';
+    }
+
+    message += '\n\nRe-open /admin to see changes.';
+
+    const embed = embedUtils.createSuccessEmbed(message);
+    await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction, 4000);
+
+  } catch (error) {
+    console.error('Error updating retirement settings:', error);
+    const embed = embedUtils.createErrorEmbed('Failed to update retirement settings!');
+    await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
+  }
+}
+
+/**
+ * Show image browser
+ */
+async function showImageBrowser(interaction, page = 0) {
+  const isUpdate = interaction.deferred || interaction.replied;
+  
+  if (!isUpdate) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  }
+
+  try {
+    const guildId = interaction.guild.id;
+
+    const offset = page * 10;
+    const imagesResult = await database.query(
+      `SELECT * FROM images 
+       WHERE guild_id = $1 
+       ORDER BY elo DESC 
+       LIMIT 10 OFFSET $2`,
+      [guildId, offset]
+    );
+
+    const totalResult = await database.query(
+      'SELECT COUNT(*) as total FROM images WHERE guild_id = $1',
+      [guildId]
+    );
+
+    const totalImages = parseInt(totalResult.rows[0].total);
+    const totalPages = Math.ceil(totalImages / 10);
+
+    if (imagesResult.rows.length === 0) {
+      const embed = embedUtils.createErrorEmbed('No images found!');
+      await interaction.editReply({ embeds: [embed], components: [] });
+      return;
+    }
+
+    const currentImage = imagesResult.rows[0];
+    const imageUrl = await storage.getImageUrl(currentImage.s3_key);
+
+    const embed = embedUtils.createBaseEmbed();
+    embed.setTitle(`🖼️ Image Browser - Image #${currentImage.id}`);
+    embed.setDescription(
+      `**ELO:** ${currentImage.elo}\n` +
+      `**Record:** ${currentImage.wins}W - ${currentImage.losses}L\n` +
+      `**Status:** ${currentImage.retired ? '🔴 Retired' : '🟢 Active'}\n` +
+      `**Uploader:** <@${currentImage.uploader_id}>\n` +
+      `**Imported:** <t:${Math.floor(new Date(currentImage.imported_at).getTime() / 1000)}:R>\n\n` +
+      `Page ${page + 1} of ${totalPages} • ${totalImages} total images`
+    );
+    embed.setImage(imageUrl);
+
+    const navRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`browse_prev_${page}`)
+          .setLabel('◀ Previous')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page === 0),
+        new ButtonBuilder()
+          .setCustomId(`browse_next_${page}`)
+          .setLabel('Next ▶')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(page >= totalPages - 1),
+        new ButtonBuilder()
+          .setCustomId(`browse_close`)
+          .setLabel('Close')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    const actionRow = new ActionRowBuilder();
+    
+    if (currentImage.retired) {
+      actionRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`image_unretire_${currentImage.id}_${page}`)
+          .setLabel('♻️ Unretire')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`image_delete_${currentImage.id}_${page}`)
+          .setLabel('🗑️ Delete')
+          .setStyle(ButtonStyle.Danger)
+      );
+    } else {
+      actionRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`image_retire_${currentImage.id}_${page}`)
+          .setLabel('📦 Retire')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`image_delete_${currentImage.id}_${page}`)
+          .setLabel('🗑️ Delete')
+          .setStyle(ButtonStyle.Danger)
+      );
+    }
+
+    if (isUpdate) {
+      await interaction.update({ 
+        embeds: [embed], 
+        components: [navRow, actionRow]
+      });
+    } else {
+      await interaction.editReply({ 
+        embeds: [embed], 
+        components: [navRow, actionRow]
+      });
+    }
+  } catch (error) {
+    console.error('Error showing image browser:', error);
+    const embed = embedUtils.createErrorEmbed('Failed to load images!');
+    await interaction.editReply({ embeds: [embed], components: [] });
+  }
+}
+
+/**
+ * Handle browse navigation
+ */
+async function handleBrowseNavigation(interaction) {
+  const parts = interaction.customId.split('_');
+  const action = parts[1];
+  const currentPage = parseInt(parts[2] || 0);
+
+  if (action === 'close') {
+    await interaction.update({ components: [] });
+    autoDeleteEphemeral(interaction);
+    return;
+  }
+
+  const newPage = action === 'next' ? currentPage + 1 : currentPage - 1;
+  await showImageBrowser(interaction, newPage);
+}
+
+/**
+ * Handle image delete
+ */
+async function handleImageDelete(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    const parts = interaction.customId.split('_');
+    const imageId = parseInt(parts[2]);
+    const page = parseInt(parts[3]);
+    const guildId = interaction.guild.id;
+
+    const imageResult = await database.query(
+      'SELECT * FROM images WHERE guild_id = $1 AND id = $2',
+      [guildId, imageId]
+    );
+
+    if (imageResult.rows.length === 0) {
+      const embed = embedUtils.createErrorEmbed('Image not found!');
+      await interaction.editReply({ embeds: [embed] });
+      autoDeleteEphemeral(interaction);
+      return;
+    }
+
+    const image = imageResult.rows[0];
+
+    await storage.deleteImage(image.s3_key);
+
+    await database.query(
+      'DELETE FROM images WHERE guild_id = $1 AND id = $2',
+      [guildId, imageId]
+    );
+
+    const embed = embedUtils.createSuccessEmbed(`Image #${imageId} deleted!`);
+    await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
+
+    await showImageBrowser(interaction.message, page);
+  } catch (error) {
+    console.error('Error deleting image:', error);
+    const embed = embedUtils.createErrorEmbed('Failed to delete image!');
+    await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
+  }
+}
+
+/**
+ * Handle image retire
+ */
+async function handleImageRetire(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    const parts = interaction.customId.split('_');
+    const imageId = parseInt(parts[2]);
+    const page = parseInt(parts[3]);
+    const guildId = interaction.guild.id;
+
+    await database.query(
+      'UPDATE images SET retired = true, retired_at = NOW() WHERE guild_id = $1 AND id = $2',
+      [guildId, imageId]
+    );
+
+    const embed = embedUtils.createSuccessEmbed(`Image #${imageId} retired!`);
+    await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
+
+    await showImageBrowser(interaction.message, page);
+  } catch (error) {
+    console.error('Error retiring image:', error);
+    const embed = embedUtils.createErrorEmbed('Failed to retire image!');
+    await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
+  }
+}
+
+/**
+ * Handle image unretire
+ */
+async function handleImageUnretire(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    const parts = interaction.customId.split('_');
+    const imageId = parseInt(parts[2]);
+    const page = parseInt(parts[3]);
+    const guildId = interaction.guild.id;
+
+    await database.query(
+      'UPDATE images SET retired = false, retired_at = NULL WHERE guild_id = $1 AND id = $2',
+      [guildId, imageId]
+    );
+
+    const embed = embedUtils.createSuccessEmbed(`Image #${imageId} unretired!`);
+    await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
+
+    await showImageBrowser(interaction.message, page);
+  } catch (error) {
+    console.error('Error unretiring image:', error);
+    const embed = embedUtils.createErrorEmbed('Failed to unretire image!');
+    await interaction.editReply({ embeds: [embed] });
+    autoDeleteEphemeral(interaction);
   }
 }
 
@@ -262,7 +646,6 @@ async function handleScheduleSubmit(interaction) {
     const intervalMinutes = parseInt(interaction.fields.getTextInputValue('duel_interval'));
     const durationMinutes = parseInt(interaction.fields.getTextInputValue('duel_duration'));
 
-    // Validate
     if (isNaN(intervalMinutes) || intervalMinutes < 1) {
       const embed = embedUtils.createErrorEmbed('Invalid interval! Must be at least 1 minute.');
       await interaction.editReply({ embeds: [embed] });
@@ -277,17 +660,14 @@ async function handleScheduleSubmit(interaction) {
       return;
     }
 
-    // Convert to seconds
     const intervalSeconds = intervalMinutes * 60;
     const durationSeconds = durationMinutes * 60;
 
-    // Update database
     await database.query(
       'UPDATE guild_config SET duel_interval = $1, duel_duration = $2 WHERE guild_id = $3',
       [intervalSeconds, durationSeconds, guildId]
     );
 
-    // Show success message
     const embed = embedUtils.createSuccessEmbed(
       `✅ Schedule updated!\n\nInterval: ${intervalMinutes} min\nDuration: ${durationMinutes} min\n\nRe-open /admin to see changes.`
     );
@@ -313,7 +693,6 @@ async function handleEloSubmit(interaction) {
     const startingElo = parseInt(interaction.fields.getTextInputValue('starting_elo'));
     const kFactor = parseInt(interaction.fields.getTextInputValue('k_factor'));
 
-    // Validate
     if (isNaN(startingElo) || startingElo < 0) {
       const embed = embedUtils.createErrorEmbed('Invalid starting ELO!');
       await interaction.editReply({ embeds: [embed] });
@@ -328,13 +707,11 @@ async function handleEloSubmit(interaction) {
       return;
     }
 
-    // Update database
     await database.query(
       'UPDATE guild_config SET starting_elo = $1, k_factor = $2 WHERE guild_id = $3',
       [startingElo, kFactor, guildId]
     );
 
-    // Show success message
     const embed = embedUtils.createSuccessEmbed(
       `✅ ELO settings updated!\n\nStarting ELO: ${startingElo}\nK-Factor: ${kFactor}\n\nRe-open /admin to see changes.`
     );
@@ -360,10 +737,9 @@ async function handleImportSubmit(interaction) {
     let channelInput = interaction.fields.getTextInputValue('channel_id');
     const messageLimit = parseInt(interaction.fields.getTextInputValue('message_limit'));
 
-    // Extract channel ID from mention or use directly
     const channelIdMatch = channelInput.match(/(\d+)/);
     if (!channelIdMatch) {
-      const embed = embedUtils.createErrorEmbed('Invalid channel! Please provide a channel ID or mention.');
+      const embed = embedUtils.createErrorEmbed('Invalid channel!');
       await interaction.editReply({ embeds: [embed] });
       autoDeleteEphemeral(interaction);
       return;
@@ -371,7 +747,6 @@ async function handleImportSubmit(interaction) {
 
     const channelId = channelIdMatch[1];
 
-    // Validate limit
     if (isNaN(messageLimit) || messageLimit < 1 || messageLimit > 100) {
       const embed = embedUtils.createErrorEmbed('Message limit must be between 1 and 100!');
       await interaction.editReply({ embeds: [embed] });
@@ -379,10 +754,9 @@ async function handleImportSubmit(interaction) {
       return;
     }
 
-    // Get channel
     const channel = await interaction.guild.channels.fetch(channelId);
     if (!channel || !channel.isTextBased()) {
-      const embed = embedUtils.createErrorEmbed('Invalid channel or bot cannot access it!');
+      const embed = embedUtils.createErrorEmbed('Invalid channel!');
       await interaction.editReply({ embeds: [embed] });
       autoDeleteEphemeral(interaction);
       return;
@@ -390,10 +764,9 @@ async function handleImportSubmit(interaction) {
 
     const progressEmbed = embedUtils.createBaseEmbed();
     progressEmbed.setTitle('📥 Importing Images...');
-    progressEmbed.setDescription(`Scanning ${channel} for images...\n\nThis may take a moment.`);
+    progressEmbed.setDescription(`Scanning ${channel}...\n\nThis may take a moment.`);
     await interaction.editReply({ embeds: [progressEmbed] });
 
-    // Fetch messages
     const messages = await channel.messages.fetch({ limit: messageLimit });
     let imported = 0;
     let skipped = 0;
@@ -408,23 +781,22 @@ async function handleImportSubmit(interaction) {
     }
 
     const successEmbed = embedUtils.createSuccessEmbed(
-      `✅ Import complete!\n\nImported: ${imported} images\nSkipped: ${skipped} (duplicates/invalid)\n\nRe-open /admin to see updated stats.`
+      `✅ Import complete!\n\nImported: ${imported}\nSkipped: ${skipped}\n\nRe-open /admin to see stats.`
     );
 
     await interaction.editReply({ embeds: [successEmbed] });
-    autoDeleteEphemeral(interaction, 5000); // 5 seconds for import
+    autoDeleteEphemeral(interaction, 5000);
 
   } catch (error) {
     console.error('Error importing images:', error);
-    const embed = embedUtils.createErrorEmbed('Failed to import images! Check bot permissions.');
+    const embed = embedUtils.createErrorEmbed('Failed to import images!');
     await interaction.editReply({ embeds: [embed] });
     autoDeleteEphemeral(interaction);
   }
 }
 
-/**
- * Handle vote button
- */
+// Vote and duel control handlers (same as before)
+
 async function handleVote(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -491,9 +863,6 @@ async function handleVote(interaction) {
   }
 }
 
-/**
- * Handle start duel button
- */
 async function handleStartDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -506,15 +875,12 @@ async function handleStartDuel(interaction) {
     autoDeleteEphemeral(interaction);
   } catch (error) {
     console.error('Error starting duel:', error);
-    const embed = embedUtils.createErrorEmbed('Failed to start duel system.');
+    const embed = embedUtils.createErrorEmbed('Failed to start.');
     await interaction.editReply({ embeds: [embed] });
     autoDeleteEphemeral(interaction);
   }
 }
 
-/**
- * Handle stop duel button
- */
 async function handleStopDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -527,15 +893,12 @@ async function handleStopDuel(interaction) {
     autoDeleteEphemeral(interaction);
   } catch (error) {
     console.error('Error stopping duel:', error);
-    const embed = embedUtils.createErrorEmbed('Failed to stop duel system.');
+    const embed = embedUtils.createErrorEmbed('Failed to stop.');
     await interaction.editReply({ embeds: [embed] });
     autoDeleteEphemeral(interaction);
   }
 }
 
-/**
- * Handle skip duel button
- */
 async function handleSkipDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -543,20 +906,17 @@ async function handleSkipDuel(interaction) {
     const guildId = interaction.guild.id;
     await duelManager.skipDuel(guildId);
 
-    const embed = embedUtils.createSuccessEmbed('Duel skipped! Starting next...');
+    const embed = embedUtils.createSuccessEmbed('Duel skipped!');
     await interaction.editReply({ embeds: [embed] });
     autoDeleteEphemeral(interaction);
   } catch (error) {
     console.error('Error skipping duel:', error);
-    const embed = embedUtils.createErrorEmbed('Failed to skip duel.');
+    const embed = embedUtils.createErrorEmbed('Failed to skip.');
     await interaction.editReply({ embeds: [embed] });
     autoDeleteEphemeral(interaction);
   }
 }
 
-/**
- * Handle pause duel button
- */
 async function handlePauseDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -579,9 +939,6 @@ async function handlePauseDuel(interaction) {
   }
 }
 
-/**
- * Handle resume duel button
- */
 async function handleResumeDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
