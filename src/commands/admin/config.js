@@ -509,9 +509,9 @@ export default {
 
     const input = new TextInputBuilder()
       .setCustomId('log_channel_input')
-      .setLabel('Log Channel ID')
+      .setLabel('Channel ID or URL')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Right-click channel, Copy ID')
+      .setPlaceholder('Paste channel link or ID')
       .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
