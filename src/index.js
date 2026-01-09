@@ -1,20 +1,19 @@
+/**
+ * IdolDuel Bot - Main Entry Point
+ * Simplified, clean architecture
+ */
+
 import { Client, GatewayIntentBits, Collection, Events, ActivityType } from 'discord.js';
 import dotenv from 'dotenv';
 import database from './database/database.js';
 import redis from './database/redis.js';
-import storage from './services/storage.js';
-import DuelScheduler from './services/duelScheduler.js';
-import { handleButtonInteraction } from './handlers/buttonHandler.js';
-import { handleModalSubmit } from './handlers/modalHandler.js';
-import { handleSelectMenu } from './handlers/selectHandler.js';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import storage from './services/image/storage.js';
+import duelManager from './services/duel/manager.js';
+import logger from './utils/logger.js';
+import { handleInteractions } from './handlers/interactions.js';
+import { handleMessage } from './handlers/messages.js';
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const client = new Client({
   intents: [
@@ -26,20 +25,22 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// Load commands
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+// Load commands dynamically
+const commands = [
+  (await import('./commands/setup.js')).default,
+  (await import('./commands/admin.js')).default,
+  (await import('./commands/user/leaderboard.js')).default,
+  (await import('./commands/user/profile.js')).default,
+];
 
-for (const file of commandFiles) {
-  const filePath = path.join(commandsPath, file);
-  const command = await import(`file://${filePath}`);
-  
-  if ('data' in command.default && 'execute' in command.default) {
-    client.commands.set(command.default.data.name, command.default);
-    console.log(`✅ Loaded command: ${command.default.data.name}`);
+for (const command of commands) {
+  if ('data' in command && 'execute' in command) {
+    client.commands.set(command.data.name, command);
+    console.log(`✅ Loaded command: ${command.data.name}`);
   }
 }
 
+// Bot ready event
 client.once(Events.ClientReady, async (c) => {
   console.log('╔════════════════════════════════════╗');
   console.log('║     IdolDuel Bot Started! ♡        ║');
@@ -47,62 +48,36 @@ client.once(Events.ClientReady, async (c) => {
   console.log(`📱 Logged in as ${c.user.tag}`);
   console.log(`🏠 Serving ${c.guilds.cache.size} guild(s)`);
   
-  // Deploy commands
-  console.log('🔄 Deploying slash commands...');
-  try {
-    const { REST, Routes } = await import('discord.js');
-    const rest = new REST().setToken(process.env.DISCORD_TOKEN);
-    
-    const commands = [];
-    for (const [name, command] of client.commands) {
-      commands.push(command.data.toJSON());
-    }
-    
-    // FIX: Use DISCORD_CLIENT_ID instead of CLIENT_ID
-    const clientId = process.env.DISCORD_CLIENT_ID || process.env.CLIENT_ID;
-    
-    if (!clientId) {
-      console.error('❌ Missing DISCORD_CLIENT_ID in environment variables!');
-    } else {
-      await rest.put(
-        Routes.applicationCommands(clientId),
-        { body: commands }
-      );
-      
-      console.log('✅ Successfully deployed ' + commands.length + ' application (/) commands');
-    }
-  } catch (error) {
-    console.error('❌ Error deploying commands:', error);
-  }
-  
   // Initialize database
   try {
     await database.initialize();
-    console.log('✅ Database initialized successfully');
+    console.log('✅ Database initialized');
   } catch (error) {
     console.error('❌ Database initialization failed:', error);
     process.exit(1);
   }
   
-  // Connect to Redis
+  // Initialize Redis
   try {
     await redis.initialize();
     console.log('✅ Redis initialized');
   } catch (error) {
-    console.error('⚠️  Redis initialization failed (will use PostgreSQL fallback):', error.message);
+    console.error('⚠️ Redis initialization failed (will use fallback):', error.message);
   }
 
   // Test S3 connection
   try {
     await storage.testConnection();
   } catch (error) {
-    console.error('⚠️  S3 connection test failed:', error.message);
+    console.error('⚠️ S3 connection test failed:', error.message);
   }
   
-  // Initialize and attach duel scheduler
+  // Initialize duel manager
+  duelManager.setClient(client);
+  logger.setClient(client);
+  
   console.log('🕐 Starting duel scheduler...');
-  client.duelScheduler = new DuelScheduler(client);
-  await client.duelScheduler.start();
+  await duelManager.startAllGuilds();
   console.log('✅ Duel scheduler started');
   
   // Set bot status
@@ -112,8 +87,8 @@ client.once(Events.ClientReady, async (c) => {
   console.log('═══════════════════════════════════');
 });
 
+// Command handler
 client.on(Events.InteractionCreate, async interaction => {
-  // Handle slash commands
   if (interaction.isChatInputCommand()) {
     const command = client.commands.get(interaction.commandName);
     
@@ -128,7 +103,25 @@ client.on(Events.InteractionCreate, async interaction => {
       console.error('Error executing command:', error);
       
       const errorMessage = { 
-        content: 'There was an error executing this command! Please try again. (>﹏<)', 
+        content: 'There was an error executing this command! (>﹏<)', 
+        ephemeral: true 
+      };
+      
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorMessage);
+      } else {
+        await interaction.reply(errorMessage);
+      }
+    }
+  } else {
+    // Handle buttons, selects, modals
+    try {
+      await handleInteractions(interaction);
+    } catch (error) {
+      console.error('Error handling interaction:', error);
+      
+      const errorMessage = { 
+        content: 'There was an error processing your action! (>﹏<)', 
         ephemeral: true 
       };
       
@@ -139,65 +132,14 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     }
   }
-  
-  // Handle button interactions
-  else if (interaction.isButton()) {
-    try {
-      await handleButtonInteraction(interaction);
-    } catch (error) {
-      console.error('Error handling button:', error);
-      
-      const errorMessage = { 
-        content: 'There was an error processing your action! Please try again. (>﹏<)', 
-        ephemeral: true 
-      };
-      
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(errorMessage);
-      } else {
-        await interaction.reply(errorMessage);
-      }
-    }
-  }
-  
-  // Handle select menu interactions
-  else if (interaction.isStringSelectMenu()) {
-    try {
-      await handleSelectMenu(interaction);
-    } catch (error) {
-      console.error('Error handling select menu:', error);
-      
-      const errorMessage = { 
-        content: 'There was an error processing your selection! Please try again. (>﹏<)', 
-        ephemeral: true 
-      };
-      
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(errorMessage);
-      } else {
-        await interaction.reply(errorMessage);
-      }
-    }
-  }
-  
-  // Handle modal submissions
-  else if (interaction.isModalSubmit()) {
-    try {
-      await handleModalSubmit(interaction);
-    } catch (error) {
-      console.error('Error handling modal:', error);
-      
-      const errorMessage = { 
-        content: 'There was an error processing your submission! Please try again. (>﹏<)', 
-        ephemeral: true 
-      };
-      
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp(errorMessage);
-      } else {
-        await interaction.reply(errorMessage);
-      }
-    }
+});
+
+// Message handler (auto-import)
+client.on(Events.MessageCreate, async message => {
+  try {
+    await handleMessage(message);
+  } catch (error) {
+    console.error('Error handling message:', error);
   }
 });
 
@@ -211,11 +153,7 @@ process.on('unhandledRejection', error => {
 });
 
 process.on('SIGINT', async () => {
-  console.log('\n⏹️  Shutting down gracefully...');
-  
-  if (client.duelScheduler) {
-    client.duelScheduler.stop();
-  }
+  console.log('\n⏹️ Shutting down gracefully...');
   
   if (redis.isConnected) {
     await redis.close();
