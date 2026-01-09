@@ -3,6 +3,8 @@ import database from '../database/database.js';
 import embedUtils from '../utils/embeds.js';
 import adminConfig from '../commands/admin/config.js';
 import leaderboardCmd from '../commands/user/leaderboard.js';
+import imageManagement from '../commands/admin/imageManagement.js';
+import adminLogs from '../commands/admin/adminLogs.js';
 import storage from '../services/storage.js';
 import eloService from '../services/elo.js';
 import { MessageFlags } from 'discord.js';
@@ -118,12 +120,52 @@ export async function handleButtonInteraction(interaction) {
     return;
   }
 
-  // Admin buttons - image management
+  // Admin buttons - image management (NEW)
   if (customId === 'admin_import_images') {
     await interaction.showModal(adminConfig.createImportChannelsModal());
     return;
   }
 
+  if (customId === 'admin_browse_images') {
+    await imageManagement.browseImages(interaction);
+    return;
+  }
+
+  if (customId === 'admin_filter_images') {
+    await imageManagement.showFilterInterface(interaction);
+    return;
+  }
+
+  if (customId === 'admin_bulk_retire') {
+    await imageManagement.showBulkRetire(interaction);
+    return;
+  }
+
+  if (customId === 'admin_export_stats') {
+    await handleExportStats(interaction);
+    return;
+  }
+
+  // Image browser navigation (NEW)
+  if (customId.startsWith('browse_images_')) {
+    await handleBrowseNavigation(interaction);
+    return;
+  }
+
+  if (customId === 'admin_back_image_mgmt') {
+    await interaction.deferUpdate();
+    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
+    await imageManagement.showImageManagement(interaction, config);
+    return;
+  }
+
+  // Admin logs navigation (NEW)
+  if (customId.startsWith('logs_')) {
+    await handleLogsNavigation(interaction);
+    return;
+  }
+
+  // Old image list buttons (kept for backward compatibility)
   if (customId === 'admin_list_images') {
     await handleListImagesButton(interaction);
     return;
@@ -136,13 +178,6 @@ export async function handleButtonInteraction(interaction) {
 
   if (customId === 'image_list_next') {
     await handleImageListNavigation(interaction, 'next');
-    return;
-  }
-
-  if (customId === 'admin_back_image_mgmt') {
-    await interaction.deferUpdate();
-    const config = await adminConfig.getOrCreateConfig(interaction.guild.id);
-    await adminConfig.handleImageManagement(interaction, config);
     return;
   }
 
@@ -339,6 +374,129 @@ async function handleResumeDuelButton(interaction) {
   }
 }
 
+// NEW: Handle browse images navigation
+async function handleBrowseNavigation(interaction) {
+  const content = interaction.message.content;
+  const match = content.match(/__BROWSE_STATE:(.+?)__/);
+  
+  if (!match) {
+    await interaction.reply({ 
+      content: 'Navigation data not found. Please start over.', 
+      flags: MessageFlags.Ephemeral 
+    });
+    return;
+  }
+  
+  const state = JSON.parse(match[1]);
+  let { page, sortBy, filterActive } = state;
+  
+  if (interaction.customId === 'browse_images_next') {
+    page++;
+  } else if (interaction.customId === 'browse_images_prev') {
+    page--;
+  } else if (interaction.customId === 'browse_images_first') {
+    page = 1;
+  } else if (interaction.customId === 'browse_images_last') {
+    // Calculate last page
+    let filterClause = '';
+    if (filterActive === 'active') filterClause = 'AND retired = false';
+    if (filterActive === 'retired') filterClause = 'AND retired = true';
+    
+    const countResult = await database.query(
+      `SELECT COUNT(*) as total FROM images WHERE guild_id = $1 ${filterClause}`,
+      [interaction.guild.id]
+    );
+    const totalPages = Math.ceil(parseInt(countResult.rows[0].total) / 25);
+    page = totalPages;
+  }
+  
+  await imageManagement.browseImages(interaction, page, sortBy, filterActive);
+}
+
+// NEW: Handle admin logs navigation
+async function handleLogsNavigation(interaction) {
+  if (interaction.customId === 'logs_export') {
+    await adminLogs.exportLogs(interaction);
+    return;
+  }
+
+  const content = interaction.message.content;
+  const match = content.match(/__LOGS_STATE:(.+?)__/);
+  
+  if (!match) {
+    await interaction.reply({ 
+      content: 'Navigation data not found. Please start over.', 
+      flags: MessageFlags.Ephemeral 
+    });
+    return;
+  }
+  
+  const state = JSON.parse(match[1]);
+  let { page, filterType } = state;
+  
+  if (interaction.customId === 'logs_next') {
+    page++;
+  } else if (interaction.customId === 'logs_prev') {
+    page--;
+  } else if (interaction.customId === 'logs_refresh') {
+    page = 1;
+  }
+  
+  await adminLogs.showAdminLogs(interaction, page, filterType);
+}
+
+// NEW: Handle export stats
+async function handleExportStats(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    const guildId = interaction.guild.id;
+
+    // Get all image stats
+    const result = await database.query(
+      `SELECT id, elo, wins, losses, current_streak, best_streak, 
+              total_votes_received, uploader_id, retired, imported_at
+       FROM images 
+       WHERE guild_id = $1 
+       ORDER BY elo DESC`,
+      [guildId]
+    );
+
+    if (result.rows.length === 0) {
+      const errorEmbed = embedUtils.createErrorEmbed('No images found to export.');
+      await interaction.editReply({ embeds: [errorEmbed] });
+      return;
+    }
+
+    // Format as CSV
+    let csv = 'ID,ELO,Wins,Losses,Win Rate,Current Streak,Best Streak,Total Votes,Uploader ID,Status,Imported At\n';
+    
+    result.rows.forEach(img => {
+      const winRate = eloService.calculateWinRate(img.wins, img.losses);
+      const status = img.retired ? 'Retired' : 'Active';
+      csv += `${img.id},${img.elo},${img.wins},${img.losses},${winRate}%,${img.current_streak},${img.best_streak},${img.total_votes_received},${img.uploader_id},${status},${img.imported_at}\n`;
+    });
+
+    // Create file
+    const buffer = Buffer.from(csv, 'utf-8');
+    const attachment = {
+      attachment: buffer,
+      name: `image-stats-${Date.now()}.csv`
+    };
+
+    const embed = embedUtils.createSuccessEmbed(
+      `Exported stats for ${result.rows.length} images.\nCheck the attached CSV file.`
+    );
+
+    await interaction.editReply({ embeds: [embed], files: [attachment] });
+  } catch (error) {
+    console.error('Error exporting stats:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Failed to export stats.');
+    await interaction.editReply({ embeds: [errorEmbed] });
+  }
+}
+
+// OLD: Keep for backward compatibility
 async function handleListImagesButton(interaction) {
   await interaction.deferUpdate();
 
@@ -364,7 +522,7 @@ async function handleListImagesButton(interaction) {
     const images = result.rows;
     const currentIndex = 0;
     const image = images[currentIndex];
-    const imageUrl = await storage.getImageUrl(image.s3_key); // AWAIT added for signed URLs
+    const imageUrl = await storage.getImageUrl(image.s3_key);
     
     const embed = embedUtils.createBaseEmbed();
     const winRate = eloService.calculateWinRate(image.wins, image.losses);
@@ -381,7 +539,6 @@ async function handleListImagesButton(interaction) {
       `**Win Rate:** ${winRate}%\n` +
       `**Uploader:** <@${image.uploader_id}>`
     );
-    // Set both thumbnail AND image for better display
     embed.setThumbnail(imageUrl);
     embed.setImage(imageUrl);
     embed.setFooter({ text: `Image ${currentIndex + 1} of ${images.length} | Navigate with buttons ♡` });
@@ -443,7 +600,7 @@ async function handleImageListNavigation(interaction, direction) {
 
     const images = result.rows;
     const image = images[currentIndex];
-    const imageUrl = await storage.getImageUrl(image.s3_key); // AWAIT added for signed URLs
+    const imageUrl = await storage.getImageUrl(image.s3_key);
     
     const embed = embedUtils.createBaseEmbed();
     const winRate = eloService.calculateWinRate(image.wins, image.losses);
@@ -460,7 +617,6 @@ async function handleImageListNavigation(interaction, direction) {
       `**Win Rate:** ${winRate}%\n` +
       `**Uploader:** <@${image.uploader_id}>`
     );
-    // Set both thumbnail AND image for better display
     embed.setThumbnail(imageUrl);
     embed.setImage(imageUrl);
     embed.setFooter({ text: `Image ${currentIndex + 1} of ${images.length} | Navigate with buttons ♡` });
