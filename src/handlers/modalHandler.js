@@ -353,7 +353,13 @@ async function handleDuelChannelModal(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const channelId = interaction.fields.getTextInputValue('duel_channel_input').trim();
+    let channelId = interaction.fields.getTextInputValue('duel_channel').trim();
+    
+    // Extract channel ID from URL if needed
+    if (channelId.includes('discord.com/channels/')) {
+      const parts = channelId.split('/');
+      channelId = parts[parts.length - 1];
+    }
     
     // Verify channel exists
     const channel = await interaction.guild.channels.fetch(channelId);
@@ -370,7 +376,7 @@ async function handleDuelChannelModal(interaction) {
     await interaction.editReply({ embeds: [successEmbed] });
   } catch (error) {
     console.error('Error setting duel channel:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Invalid channel ID. Please make sure the channel exists.');
+    const errorEmbed = embedUtils.createErrorEmbed('Invalid channel ID or URL. Please check that the channel exists in this server.');
     await interaction.editReply({ embeds: [errorEmbed] });
   }
 }
@@ -379,25 +385,54 @@ async function handleImportChannelsModal(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const channelIds = interaction.fields.getTextInputValue('import_channels_input')
-      .split(',')
-      .map(id => id.trim())
-      .filter(id => id.length > 0);
+    let input = interaction.fields.getTextInputValue('import_channels').trim();
+    
+    // Extract channel IDs from URLs
+    const channelIds = input
+      .split(/[\n,]+/)
+      .map(str => str.trim())
+      .filter(str => str.length > 0)
+      .map(str => {
+        if (str.includes('discord.com/channels/')) {
+          const parts = str.split('/');
+          return parts[parts.length - 1];
+        }
+        return str;
+      });
 
     if (channelIds.length === 0) {
-      throw new Error('No channel IDs provided');
+      throw new Error('No valid channel IDs provided');
     }
 
+    // Verify channels exist
+    for (const id of channelIds) {
+      const channel = await interaction.guild.channels.fetch(id);
+      if (!channel) {
+        throw new Error(`Channel ${id} not found`);
+      }
+    }
+
+    // Save to config
+    await database.query(
+      'UPDATE guild_config SET import_channel_ids = $1 WHERE guild_id = $2',
+      [channelIds, interaction.guild.id]
+    );
+
     const successEmbed = embedUtils.createSuccessEmbed(
-      `Starting import from ${channelIds.length} channel(s)...\nThis may take a while. Check back soon! ♡`
+      `Import channels set!\n\n` +
+      `Watching: ${channelIds.map(id => `<#${id}>`).join(', ')}\n\n` +
+      `Images posted in these channels will be automatically imported.\n` +
+      `Enable auto-approve in Import Settings to skip manual approval.`
     );
     await interaction.editReply({ embeds: [successEmbed] });
-
-    // Import images in background
-    importImagesFromChannels(interaction.client, interaction.guild.id, channelIds);
   } catch (error) {
-    console.error('Error importing images:', error);
-    const errorEmbed = embedUtils.createErrorEmbed('Failed to start import. Check channel IDs.');
+    console.error('Error setting import channels:', error);
+    const errorEmbed = embedUtils.createErrorEmbed(
+      'Invalid channel IDs or URLs. Please check that:\n' +
+      '• Channels exist in this server\n' +
+      '• IDs are comma or line separated\n' +
+      '• URLs are valid Discord channel links'
+    );
     await interaction.editReply({ embeds: [errorEmbed] });
   }
 }
