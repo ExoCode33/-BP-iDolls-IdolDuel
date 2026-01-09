@@ -1,6 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import database from '../../database/database.js';
-import storage from '../../services/storage.js';
+import storage from '../../services/image/storage.js';
 import embedUtils from '../../utils/embeds.js';
 
 export default {
@@ -10,22 +10,22 @@ export default {
     try {
       const guildId = interaction.guild.id;
 
-      // Get top 15 users by ELO
-      const usersResult = await database.query(
-        `SELECT * FROM users 
-         WHERE guild_id = $1
+      // Get top 15 images by ELO
+      const imagesResult = await database.query(
+        `SELECT * FROM images 
+         WHERE guild_id = $1 AND retired = false
          ORDER BY elo DESC
          LIMIT 15`,
         [guildId]
       );
 
-      if (usersResult.rows.length === 0) {
-        const errorEmbed = embedUtils.createErrorEmbed('No users found in the leaderboard yet!');
+      if (imagesResult.rows.length === 0) {
+        const errorEmbed = embedUtils.createErrorEmbed('No images found in the leaderboard yet!');
         await interaction.editReply({ embeds: [errorEmbed] });
         return;
       }
 
-      const embed = embedUtils.createLeaderboardEmbed(usersResult.rows, 1);
+      const embed = embedUtils.createLeaderboardEmbed(imagesResult.rows, 1);
 
       // Add button to view top images
       const row = new ActionRowBuilder()
@@ -67,7 +67,7 @@ export default {
 
       // Show first image
       const images = imagesResult.rows;
-      const imageUrl = await storage.getImageUrl(images[0].s3_key); // AWAIT added for signed URLs
+      const imageUrl = await storage.getImageUrl(images[0].s3_key);
       const embed = embedUtils.createTopImagesEmbed(images, imageUrl, 0);
 
       // Create navigation buttons
@@ -128,7 +128,7 @@ export default {
       );
 
       const images = imagesResult.rows;
-      const imageUrl = await storage.getImageUrl(images[currentIndex].s3_key); // AWAIT added for signed URLs
+      const imageUrl = await storage.getImageUrl(images[currentIndex].s3_key);
       const embed = embedUtils.createTopImagesEmbed(images, imageUrl, currentIndex);
 
       // Update navigation buttons
@@ -166,16 +166,16 @@ export default {
     try {
       const guildId = interaction.guild.id;
 
-      // Get top 15 users again
-      const usersResult = await database.query(
-        `SELECT * FROM users 
-         WHERE guild_id = $1
+      // Get top 15 images again
+      const imagesResult = await database.query(
+        `SELECT * FROM images 
+         WHERE guild_id = $1 AND retired = false
          ORDER BY elo DESC
          LIMIT 15`,
         [guildId]
       );
 
-      const embed = embedUtils.createLeaderboardEmbed(usersResult.rows, 1);
+      const embed = embedUtils.createLeaderboardEmbed(imagesResult.rows, 1);
 
       const row = new ActionRowBuilder()
         .addComponents(
