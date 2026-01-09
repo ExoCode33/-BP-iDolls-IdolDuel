@@ -1,4 +1,12 @@
+/**
+ * Redis Cache Manager
+ * Handles caching for image URLs, duels, and leaderboards
+ */
+
 import { createClient } from 'redis';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 class RedisCache {
   constructor() {
@@ -7,21 +15,18 @@ class RedisCache {
   }
 
   async initialize() {
-    if (!process.env.REDIS_URL) {
-      console.log('⚠️  Redis URL not configured, using PostgreSQL fallback');
-      return;
-    }
-
     try {
+      if (!process.env.REDIS_URL) {
+        console.log('⚠️ Redis URL not found, caching disabled');
+        return;
+      }
+
       this.client = createClient({
         url: process.env.REDIS_URL,
-        password: process.env.REDIS_PASSWORD,
         socket: {
           reconnectStrategy: (retries) => {
-            if (retries > 3) {
-              console.log('⚠️  Redis reconnection failed, falling back to PostgreSQL');
-              this.isConnected = false;
-              return new Error('Redis reconnection limit reached');
+            if (retries > 10) {
+              return new Error('Redis max reconnection attempts reached');
             }
             return Math.min(retries * 100, 3000);
           }
@@ -29,7 +34,7 @@ class RedisCache {
       });
 
       this.client.on('error', (err) => {
-        console.error('⚠️  Redis error:', err.message);
+        console.error('Redis error:', err.message);
         this.isConnected = false;
       });
 
@@ -38,119 +43,203 @@ class RedisCache {
         this.isConnected = true;
       });
 
-      this.client.on('disconnect', () => {
-        console.log('⚠️  Redis disconnected');
-        this.isConnected = false;
-      });
-
       await this.client.connect();
     } catch (error) {
-      console.error('⚠️  Redis initialization failed, using PostgreSQL fallback:', error.message);
+      console.error('❌ Redis initialization failed:', error.message);
       this.isConnected = false;
     }
   }
 
+  /**
+   * Get cached value
+   */
   async get(key) {
-    if (!this.isConnected || !this.client) return null;
+    if (!this.isConnected) return null;
     
     try {
       return await this.client.get(key);
     } catch (error) {
-      console.error('⚠️  Redis get error:', error.message);
+      console.error('Redis get error:', error.message);
       return null;
     }
   }
 
-  async set(key, value, expirationSeconds = null) {
-    if (!this.isConnected || !this.client) return false;
+  /**
+   * Set cached value with expiration
+   */
+  async set(key, value, expirationSeconds = 3600) {
+    if (!this.isConnected) return false;
     
     try {
-      if (expirationSeconds) {
-        await this.client.setEx(key, expirationSeconds, value);
-      } else {
-        await this.client.set(key, value);
-      }
+      await this.client.setEx(key, expirationSeconds, value);
       return true;
     } catch (error) {
-      console.error('⚠️  Redis set error:', error.message);
+      console.error('Redis set error:', error.message);
       return false;
     }
   }
 
+  /**
+   * Delete cached value
+   */
   async del(key) {
-    if (!this.isConnected || !this.client) return false;
+    if (!this.isConnected) return false;
     
     try {
       await this.client.del(key);
       return true;
     } catch (error) {
-      console.error('⚠️  Redis del error:', error.message);
+      console.error('Redis del error:', error.message);
       return false;
     }
   }
 
-  async hGet(key, field) {
-    if (!this.isConnected || !this.client) return null;
+  /**
+   * Cache image URL
+   */
+  async cacheImageUrl(s3Key, url, expirationSeconds = 3600) {
+    const key = `image_url:${s3Key}`;
+    return await this.set(key, url, expirationSeconds);
+  }
+
+  /**
+   * Get cached image URL
+   */
+  async getCachedImageUrl(s3Key) {
+    const key = `image_url:${s3Key}`;
+    return await this.get(key);
+  }
+
+  /**
+   * Cache leaderboard
+   */
+  async cacheLeaderboard(guildId, data, expirationSeconds = 300) {
+    const key = `leaderboard:${guildId}`;
+    return await this.set(key, JSON.stringify(data), expirationSeconds);
+  }
+
+  /**
+   * Get cached leaderboard
+   */
+  async getCachedLeaderboard(guildId) {
+    const key = `leaderboard:${guildId}`;
+    const data = await this.get(key);
+    return data ? JSON.parse(data) : null;
+  }
+
+  /**
+   * Set active duel data
+   */
+  async setActiveDuel(guildId, duelData) {
+    if (!this.isConnected) return false;
     
     try {
-      return await this.client.hGet(key, field);
+      const key = `active_duel:${guildId}`;
+      // Store for 24 hours max (safety measure)
+      await this.client.setEx(key, 86400, JSON.stringify(duelData));
+      return true;
     } catch (error) {
-      console.error('⚠️  Redis hGet error:', error.message);
+      console.error('Redis setActiveDuel error:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Get active duel data
+   */
+  async getActiveDuel(guildId) {
+    if (!this.isConnected) return null;
+    
+    try {
+      const key = `active_duel:${guildId}`;
+      const data = await this.client.get(key);
+      
+      if (!data) return null;
+      
+      const duel = JSON.parse(data);
+      
+      // Convert date strings back to Date objects
+      if (duel.startedAt) duel.startedAt = new Date(duel.startedAt);
+      if (duel.endsAt) duel.endsAt = new Date(duel.endsAt);
+      
+      return duel;
+    } catch (error) {
+      console.error('Redis getActiveDuel error:', error.message);
       return null;
     }
   }
 
-  async hSet(key, field, value) {
-    if (!this.isConnected || !this.client) return false;
+  /**
+   * Clear active duel data
+   */
+  async clearActiveDuel(guildId) {
+    if (!this.isConnected) return false;
     
     try {
-      await this.client.hSet(key, field, value);
+      const key = `active_duel:${guildId}`;
+      await this.client.del(key);
       return true;
     } catch (error) {
-      console.error('⚠️  Redis hSet error:', error.message);
+      console.error('Redis clearActiveDuel error:', error.message);
       return false;
     }
   }
 
-  async hGetAll(key) {
-    if (!this.isConnected || !this.client) return null;
-    
-    try {
-      return await this.client.hGetAll(key);
-    } catch (error) {
-      console.error('⚠️  Redis hGetAll error:', error.message);
-      return null;
-    }
+  /**
+   * Cache duel result temporarily
+   */
+  async cacheDuelResult(duelId, result, expirationSeconds = 3600) {
+    const key = `duel_result:${duelId}`;
+    return await this.set(key, JSON.stringify(result), expirationSeconds);
   }
 
-  async hDel(key, field) {
-    if (!this.isConnected || !this.client) return false;
+  /**
+   * Get cached duel result
+   */
+  async getCachedDuelResult(duelId) {
+    const key = `duel_result:${duelId}`;
+    const data = await this.get(key);
+    return data ? JSON.parse(data) : null;
+  }
+
+  /**
+   * Clear all cached data (useful for testing)
+   */
+  async clearAll() {
+    if (!this.isConnected) return false;
     
     try {
-      await this.client.hDel(key, field);
+      await this.client.flushDb();
+      console.log('🗑️ Redis cache cleared');
       return true;
     } catch (error) {
-      console.error('⚠️  Redis hDel error:', error.message);
+      console.error('Redis clearAll error:', error.message);
       return false;
     }
   }
 
-  async exists(key) {
-    if (!this.isConnected || !this.client) return false;
-    
-    try {
-      return (await this.client.exists(key)) === 1;
-    } catch (error) {
-      console.error('⚠️  Redis exists error:', error.message);
-      return false;
-    }
-  }
-
+  /**
+   * Close Redis connection
+   */
   async close() {
-    if (this.client) {
+    if (this.client && this.isConnected) {
       await this.client.quit();
+      this.isConnected = false;
+      console.log('Redis connection closed');
     }
+  }
+
+  /**
+   * Get connection status
+   */
+  getStatus() {
+    return {
+      connected: this.isConnected,
+      url: process.env.REDIS_URL ? 'configured' : 'not configured'
+    };
   }
 }
 
-export default new RedisCache();
+const redis = new RedisCache();
+
+export default redis;
