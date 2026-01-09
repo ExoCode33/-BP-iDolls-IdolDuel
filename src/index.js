@@ -28,7 +28,7 @@ client.commands = new Collection();
 // Load commands dynamically
 const commands = [
   (await import('./commands/setup.js')).default,
-  (await import('./commands/admin.js')).default,
+  (await import('./commands/admin/admin.js')).default,
   (await import('./commands/user/leaderboard.js')).default,
   (await import('./commands/user/profile.js')).default,
 ];
