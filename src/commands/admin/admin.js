@@ -1,6 +1,6 @@
 /**
  * Enhanced Admin Command
- * Clean admin panel with editable settings and auto-refresh
+ * Manual retirement settings (losses or ELO threshold)
  */
 
 import { 
@@ -12,7 +12,6 @@ import {
 } from 'discord.js';
 import database from '../../database/database.js';
 import embedUtils from '../../utils/embeds.js';
-import retirement from '../../services/image/retirement.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -89,7 +88,14 @@ export default {
     
     const scheduleMinutes = Math.floor(config.duel_interval / 60);
     const durationMinutes = Math.floor(config.duel_duration / 60);
-    const retirementInfo = retirement.getRetirementInfo(config.duel_interval);
+
+    // Retirement info
+    let retirementInfo = '• Auto-Retirement: Disabled';
+    if (config.retire_after_losses && config.retire_after_losses > 0) {
+      retirementInfo = `• Auto-Retire: ${config.retire_after_losses} losses`;
+    } else if (config.retire_below_elo && config.retire_below_elo > 0) {
+      retirementInfo = `• Auto-Retire: Below ${config.retire_below_elo} ELO`;
+    }
 
     embed.setDescription(
       `**Status:** ${config.duel_active ? (config.duel_paused ? '⏸️ Paused' : '✅ Active') : '❌ Stopped'}\n` +
@@ -102,7 +108,7 @@ export default {
       `**⚙️ Settings:**\n` +
       `• Starting ELO: ${config.starting_elo}\n` +
       `• K-Factor: ${config.k_factor}\n` +
-      `• ${retirementInfo}\n\n` +
+      `${retirementInfo}\n\n` +
       `Use the buttons below to control the system.`
     );
 
@@ -162,20 +168,37 @@ export default {
           .setLabel('📊 ELO Settings')
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
+          .setCustomId('admin_edit_retirement')
+          .setLabel('🗑️ Auto-Retire')
+          .setStyle(ButtonStyle.Primary)
+      );
+
+    // Management buttons (Row 3)
+    const managementRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
           .setCustomId('admin_import_images')
           .setLabel('📥 Import Images')
-          .setStyle(ButtonStyle.Primary)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_browse_images')
+          .setLabel('🖼️ Browse Images')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_system_reset')
+          .setLabel('⚠️ System Reset')
+          .setStyle(ButtonStyle.Danger)
       );
 
     if (isUpdate) {
       await interaction.editReply({ 
         embeds: [embed], 
-        components: [controlRow, settingsRow]
+        components: [controlRow, settingsRow, managementRow]
       });
     } else {
       await interaction.editReply({ 
         embeds: [embed], 
-        components: [controlRow, settingsRow]
+        components: [controlRow, settingsRow, managementRow]
       });
     }
   }
