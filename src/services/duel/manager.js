@@ -199,12 +199,12 @@ class DuelManager {
       const now = new Date();
       const endsAt = new Date(now.getTime() + config.duel_duration * 1000);
 
-      // Store in active_duels table
+      // Store in active_duels table (removed created_at)
       await database.query(
         `INSERT INTO active_duels (guild_id, duel_id, ends_at)
          VALUES ($1, $2, $3)
          ON CONFLICT (guild_id) 
-         DO UPDATE SET duel_id = $2, ends_at = $3, created_at = NOW()`,
+         DO UPDATE SET duel_id = $2, ends_at = $3`,
         [guildId, duelId, endsAt]
       );
 
