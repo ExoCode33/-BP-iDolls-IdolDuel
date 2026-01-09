@@ -76,6 +76,11 @@ export default {
           .setLabel('🗑️ Bulk Retire')
           .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
+          .setCustomId('admin_bulk_unretire')
+          .setLabel('♻️ Bulk Unretire')
+          .setStyle(ButtonStyle.Success)
+          .setDisabled(parseInt(retired) === 0),
+        new ButtonBuilder()
           .setCustomId('admin_export_stats')
           .setLabel('📊 Export Stats')
           .setStyle(ButtonStyle.Secondary)
@@ -151,29 +156,29 @@ export default {
       `━━━━━━━━━━━━━━━━━━━\n`
     );
 
-    // Create compact list
+    // Create compact list with clickable IDs
     const imageList = result.rows.map((img, idx) => {
       const globalIndex = offset + idx + 1;
       const status = img.retired ? '❌' : '✅';
       const rankEmoji = eloService.getRankEmoji(img.elo);
       const winRate = eloService.calculateWinRate(img.wins, img.losses);
-      return `\`${globalIndex.toString().padStart(3, ' ')}.\` ${status} ${rankEmoji} **${img.elo}** | ${img.wins}W-${img.losses}L (${winRate}%) | <@${img.uploader_id}>`;
+      return `\`${globalIndex.toString().padStart(3, ' ')}.\` ${status} ${rankEmoji} **${img.elo}** | ${img.wins}W-${img.losses}L (${winRate}%) | <@${img.uploader_id}> | ID: \`${img.id}\``;
     }).join('\n');
 
     embed.setDescription(embed.data.description + imageList);
-    embed.setFooter({ text: `Click image ID to view details • Use buttons to navigate` });
+    embed.setFooter({ text: `Click "View Image" and enter ID to see details` });
 
     // Create navigation buttons
     const navButtons = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId(`browse_images_first`)
-          .setLabel('⏮️ First')
+          .setLabel('⏮️')
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(page === 1),
         new ButtonBuilder()
           .setCustomId(`browse_images_prev`)
-          .setLabel('◀ Prev')
+          .setLabel('◀')
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(page === 1),
         new ButtonBuilder()
@@ -183,14 +188,35 @@ export default {
           .setDisabled(true),
         new ButtonBuilder()
           .setCustomId(`browse_images_next`)
-          .setLabel('Next ▶')
+          .setLabel('▶')
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(page === totalPages),
         new ButtonBuilder()
           .setCustomId(`browse_images_last`)
-          .setLabel('Last ⏭️')
+          .setLabel('⏭️')
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(page === totalPages)
+      );
+
+    // Action buttons
+    const actionButtons = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('browse_view_image')
+          .setLabel('👁️ View Image')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('browse_retire_image')
+          .setLabel('🗑️ Retire Image')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('browse_unretire_image')
+          .setLabel('♻️ Unretire Image')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('browse_delete_image')
+          .setLabel('🔥 Delete Forever')
+          .setStyle(ButtonStyle.Danger)
       );
 
     // Sort and filter controls
@@ -230,8 +256,82 @@ export default {
 
     await interaction.editReply({ 
       embeds: [embed], 
-      components: [navButtons, controlRow1, controlRow2, backButton],
+      components: [navButtons, actionButtons, controlRow1, controlRow2, backButton],
       content: `__BROWSE_STATE:${stateData}__`
+    });
+  },
+
+  /**
+   * View detailed image info
+   */
+  async viewImage(interaction, imageId) {
+    const guildId = interaction.guild.id;
+
+    const result = await database.query(
+      `SELECT * FROM images WHERE guild_id = $1 AND id = $2`,
+      [guildId, imageId]
+    );
+
+    if (result.rows.length === 0) {
+      const errorEmbed = embedUtils.createErrorEmbed('Image not found. Check the ID and try again.');
+      await interaction.editReply({ embeds: [errorEmbed] });
+      return;
+    }
+
+    const image = result.rows[0];
+    const imageUrl = await storage.getImageUrl(image.s3_key);
+    const winRate = eloService.calculateWinRate(image.wins, image.losses);
+    const status = image.retired ? '❌ RETIRED' : '✅ ACTIVE';
+
+    const embed = embedUtils.createBaseEmbed();
+    embed.setTitle(`🖼️ Image Details — ID: ${image.id}`);
+    embed.setDescription(
+      `**Status:** ${status}\n` +
+      `━━━━━━━━━━━━━━━━━━━\n` +
+      `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
+      `**Record:** ${image.wins}W - ${image.losses}L\n` +
+      `**Win Rate:** ${winRate}%\n` +
+      `**Current Streak:** ${image.current_streak} 🔥\n` +
+      `**Best Streak:** ${image.best_streak} ⭐\n` +
+      `**Total Votes:** ${image.total_votes_received}\n` +
+      `**Uploader:** <@${image.uploader_id}>\n` +
+      `**Imported:** <t:${Math.floor(new Date(image.imported_at).getTime() / 1000)}:R>\n` +
+      `${image.retired ? `**Retired:** <t:${Math.floor(new Date(image.retired_at).getTime() / 1000)}:R>\n` : ''}`
+    );
+
+    embed.setImage(imageUrl);
+
+    // Action buttons specific to this image
+    const buttons = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`image_action_retire_${image.id}`)
+          .setLabel('🗑️ Retire')
+          .setStyle(ButtonStyle.Danger)
+          .setDisabled(image.retired),
+        new ButtonBuilder()
+          .setCustomId(`image_action_unretire_${image.id}`)
+          .setLabel('♻️ Unretire')
+          .setStyle(ButtonStyle.Success)
+          .setDisabled(!image.retired),
+        new ButtonBuilder()
+          .setCustomId(`image_action_delete_${image.id}`)
+          .setLabel('🔥 Delete Forever')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    const backButton = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_browse_images')
+          .setLabel('◀ Back to Browser')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({ 
+      embeds: [embed], 
+      components: [buttons, backButton],
+      content: ''
     });
   },
 
@@ -360,5 +460,122 @@ export default {
     );
 
     await interaction.showModal(modal);
+  },
+
+  /**
+   * Show bulk unretire interface
+   */
+  async showBulkUnretire(interaction) {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_bulk_unretire')
+      .setTitle('Bulk Unretire Images');
+
+    const thresholdInput = new TextInputBuilder()
+      .setCustomId('elo_threshold')
+      .setLabel('Unretire all retired images above this ELO')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('e.g., 1000')
+      .setRequired(true);
+
+    const confirmInput = new TextInputBuilder()
+      .setCustomId('confirm_text')
+      .setLabel('Type CONFIRM to proceed')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('CONFIRM')
+      .setRequired(true);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(thresholdInput),
+      new ActionRowBuilder().addComponents(confirmInput)
+    );
+
+    await interaction.showModal(modal);
+  },
+
+  /**
+   * Show view image modal
+   */
+  createViewImageModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_view_image')
+      .setTitle('View Image Details');
+
+    const input = new TextInputBuilder()
+      .setCustomId('image_id')
+      .setLabel('Image ID')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Enter image ID from the list')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return modal;
+  },
+
+  /**
+   * Show retire image modal
+   */
+  createRetireImageModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_retire_image')
+      .setTitle('Retire Image');
+
+    const input = new TextInputBuilder()
+      .setCustomId('image_id')
+      .setLabel('Image ID to retire')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Enter image ID')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return modal;
+  },
+
+  /**
+   * Show unretire image modal
+   */
+  createUnretireImageModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_unretire_image')
+      .setTitle('Unretire Image');
+
+    const input = new TextInputBuilder()
+      .setCustomId('image_id')
+      .setLabel('Image ID to unretire')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Enter image ID')
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    return modal;
+  },
+
+  /**
+   * Show delete image modal
+   */
+  createDeleteImageModal() {
+    const modal = new ModalBuilder()
+      .setCustomId('modal_delete_image')
+      .setTitle('Delete Image Forever');
+
+    const idInput = new TextInputBuilder()
+      .setCustomId('image_id')
+      .setLabel('Image ID to delete')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('Enter image ID')
+      .setRequired(true);
+
+    const confirmInput = new TextInputBuilder()
+      .setCustomId('confirm_delete')
+      .setLabel('Type DELETE to confirm permanent deletion')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('DELETE')
+      .setRequired(true);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(idInput),
+      new ActionRowBuilder().addComponents(confirmInput)
+    );
+
+    return modal;
   }
 };
