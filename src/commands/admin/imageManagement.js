@@ -3,9 +3,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
+  EmbedBuilder,
   MessageFlags
 } from 'discord.js';
 import database from '../../database/database.js';
@@ -41,76 +39,73 @@ export default {
     const { total, active, retired, avg_elo, max_elo, min_elo } = stats.rows[0];
 
     const embed = embedUtils.createBaseEmbed();
-    embed.setTitle('━━━━━ 🖼️ Image Management ━━━━━');
+    embed.setTitle('🖼️ Image Management');
     embed.setDescription(
-      `**Image Statistics**\n` +
-      `━━━━━━━━━━━━━━━━━━━\n` +
-      `**Total Images:** ${total}\n` +
-      `**Active:** ${active}  •  **Retired:** ${retired}\n` +
-      `**Average ELO:** ${Math.round(avg_elo || 0)}\n` +
-      `**Range:** ${min_elo || 0} - ${max_elo || 0}\n` +
-      `**Max Active:** ${config.max_active_images}\n\n` +
-      `*Select an action below*`
+      `**📊 Statistics**\n` +
+      `Total: **${total}** images\n` +
+      `Active: **${active}** • Retired: **${retired}**\n` +
+      `Average ELO: **${Math.round(avg_elo || 0)}**\n` +
+      `Range: **${min_elo || 0}** - **${max_elo || 0}**\n\n` +
+      `Select a view below to manage images ♡`
     );
 
-    const buttons = new ActionRowBuilder()
+    const viewButtons = new ActionRowBuilder()
       .addComponents(
+        new ButtonBuilder()
+          .setCustomId('start_gallery_view')
+          .setLabel('🖼️ Gallery View')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('🖼️'),
         new ButtonBuilder()
           .setCustomId('admin_import_images')
-          .setLabel('📥 Import Images')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId('admin_browse_images')
-          .setLabel('📋 Browse All Images')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('admin_filter_images')
-          .setLabel('🔍 Filter Images')
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-    const buttons2 = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('admin_bulk_retire')
-          .setLabel('🗑️ Bulk Retire')
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId('admin_bulk_unretire')
-          .setLabel('♻️ Bulk Unretire')
-          .setStyle(ButtonStyle.Success)
-          .setDisabled(parseInt(retired) === 0),
+          .setLabel('Import Images')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('📥'),
         new ButtonBuilder()
           .setCustomId('admin_export_stats')
-          .setLabel('📊 Export Stats')
+          .setLabel('Export Stats')
           .setStyle(ButtonStyle.Secondary)
+          .setEmoji('📊')
+      );
+
+    const bulkButtons = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('quick_bulk_retire')
+          .setLabel('Bulk Retire Low ELO')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('🗑️'),
+        new ButtonBuilder()
+          .setCustomId('quick_bulk_unretire')
+          .setLabel('Bulk Unretire High ELO')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('♻️')
+          .setDisabled(parseInt(retired) === 0)
       );
 
     const backButton = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_back_main')
-          .setLabel('◀ Back to Main Menu')
+          .setLabel('◀ Back to Admin Menu')
           .setStyle(ButtonStyle.Secondary)
       );
 
     await interaction.editReply({ 
       embeds: [embed], 
-      components: [buttons, buttons2, backButton] 
+      components: [viewButtons, bulkButtons, backButton] 
     });
   },
 
   /**
-   * Browse all images with pagination (25 per page)
+   * Gallery view with smooth navigation
    */
-  async browseImages(interaction, page = 1, sortBy = 'elo', filterActive = 'all') {
+  async showGallery(interaction, index = 0, sortBy = 'elo', filterActive = 'all') {
     if (!interaction.replied && !interaction.deferred) {
       await interaction.deferUpdate();
     }
 
     const guildId = interaction.guild.id;
-    const itemsPerPage = 25;
-    const offset = (page - 1) * itemsPerPage;
 
     // Build filter query
     let filterClause = '';
@@ -124,126 +119,237 @@ export default {
     if (sortBy === 'recent') sortClause = 'ORDER BY imported_at DESC';
     if (sortBy === 'oldest') sortClause = 'ORDER BY imported_at ASC';
 
-    // Get total count
-    const countResult = await database.query(
-      `SELECT COUNT(*) as total FROM images WHERE guild_id = $1 ${filterClause}`,
-      [guildId]
-    );
-    const totalItems = parseInt(countResult.rows[0].total);
-    const totalPages = Math.ceil(totalItems / itemsPerPage);
-
-    // Get images for current page
+    // Get all images
     const result = await database.query(
-      `SELECT id, elo, wins, losses, uploader_id, retired, imported_at, current_streak
+      `SELECT id, elo, wins, losses, uploader_id, retired, imported_at, 
+              current_streak, best_streak, total_votes_received, s3_key, retired_at
        FROM images 
        WHERE guild_id = $1 ${filterClause}
-       ${sortClause}
-       LIMIT $2 OFFSET $3`,
-      [guildId, itemsPerPage, offset]
+       ${sortClause}`,
+      [guildId]
     );
 
     if (result.rows.length === 0) {
-      const errorEmbed = embedUtils.createErrorEmbed('No images found with the current filters.');
-      await interaction.editReply({ embeds: [errorEmbed] });
+      const errorEmbed = embedUtils.createErrorEmbed('No images found. Import some images first!');
+      await interaction.editReply({ embeds: [errorEmbed], components: [] });
       return;
     }
 
-    const embed = embedUtils.createBaseEmbed();
-    embed.setTitle(`━━━━━ 📋 Image Browser ━━━━━`);
-    embed.setDescription(
-      `**Page ${page} of ${totalPages}** (${totalItems} images)\n` +
-      `**Sort:** ${sortBy}  •  **Filter:** ${filterActive}\n` +
-      `━━━━━━━━━━━━━━━━━━━\n`
-    );
+    const images = result.rows;
+    const totalImages = images.length;
 
-    // Create compact list with clickable IDs
-    const imageList = result.rows.map((img, idx) => {
-      const globalIndex = offset + idx + 1;
-      const status = img.retired ? '❌' : '✅';
-      const rankEmoji = eloService.getRankEmoji(img.elo);
-      const winRate = eloService.calculateWinRate(img.wins, img.losses);
-      return `\`${globalIndex.toString().padStart(3, ' ')}.\` ${status} ${rankEmoji} **${img.elo}** | ${img.wins}W-${img.losses}L (${winRate}%) | <@${img.uploader_id}> | ID: \`${img.id}\``;
-    }).join('\n');
+    // Clamp index
+    if (index < 0) index = 0;
+    if (index >= totalImages) index = totalImages - 1;
 
-    embed.setDescription(embed.data.description + imageList);
-    embed.setFooter({ text: `Click "View Image" and enter ID to see details` });
+    const image = images[index];
+    const imageUrl = await storage.getImageUrl(image.s3_key);
+    const winRate = eloService.calculateWinRate(image.wins, image.losses);
 
-    // Create navigation buttons
-    const navButtons = new ActionRowBuilder()
+    // Create beautiful embed
+    const embed = new EmbedBuilder()
+      .setColor(image.retired ? 0x808080 : 0x5865F2)
+      .setTitle(`${image.retired ? '❌ RETIRED' : '✅ ACTIVE'} • Image #${image.id}`)
+      .setDescription(
+        `${eloService.getRankEmoji(image.elo)} **ELO ${image.elo}** • Rank #${index + 1} of ${totalImages}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `**Record:** ${image.wins}W - ${image.losses}L (${winRate}% win rate)\n` +
+        `**Streaks:** ${image.current_streak}🔥 current • ${image.best_streak}⭐ best\n` +
+        `**Votes:** ${image.total_votes_received} total received\n` +
+        `**Uploader:** <@${image.uploader_id}>\n` +
+        `**Added:** <t:${Math.floor(new Date(image.imported_at).getTime() / 1000)}:R>\n` +
+        `${image.retired ? `**Retired:** <t:${Math.floor(new Date(image.retired_at).getTime() / 1000)}:R>` : ''}`
+      )
+      .setImage(imageUrl)
+      .setFooter({ text: `Viewing ${index + 1} of ${totalImages} • Use arrows to navigate` });
+
+    // Navigation row - clean and simple
+    const navRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId(`browse_images_first`)
-          .setLabel('⏮️')
+          .setCustomId('gallery_first')
+          .setEmoji('⏮️')
           .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === 1),
+          .setDisabled(index === 0),
         new ButtonBuilder()
-          .setCustomId(`browse_images_prev`)
-          .setLabel('◀')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === 1),
-        new ButtonBuilder()
-          .setCustomId(`browse_images_page`)
-          .setLabel(`${page}/${totalPages}`)
+          .setCustomId('gallery_prev')
+          .setEmoji('◀️')
           .setStyle(ButtonStyle.Primary)
+          .setDisabled(index === 0),
+        new ButtonBuilder()
+          .setCustomId('gallery_info')
+          .setLabel(`${index + 1}/${totalImages}`)
+          .setStyle(ButtonStyle.Secondary)
           .setDisabled(true),
         new ButtonBuilder()
-          .setCustomId(`browse_images_next`)
-          .setLabel('▶')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === totalPages),
+          .setCustomId('gallery_next')
+          .setEmoji('▶️')
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(index === totalImages - 1),
         new ButtonBuilder()
-          .setCustomId(`browse_images_last`)
-          .setLabel('⏭️')
+          .setCustomId('gallery_last')
+          .setEmoji('⏭️')
           .setStyle(ButtonStyle.Secondary)
-          .setDisabled(page === totalPages)
+          .setDisabled(index === totalImages - 1)
       );
 
-    // Action buttons
-    const actionButtons = new ActionRowBuilder()
+    // Quick actions row - one click operations
+    const actionRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId('browse_view_image')
-          .setLabel('👁️ View Image')
-          .setStyle(ButtonStyle.Primary),
+          .setCustomId('gallery_toggle_retire')
+          .setLabel(image.retired ? 'Unretire' : 'Retire')
+          .setEmoji(image.retired ? '♻️' : '🗑️')
+          .setStyle(image.retired ? ButtonStyle.Success : ButtonStyle.Danger),
         new ButtonBuilder()
-          .setCustomId('browse_retire_image')
-          .setLabel('🗑️ Retire Image')
+          .setCustomId('gallery_delete_confirm')
+          .setLabel('Delete')
+          .setEmoji('🔥')
           .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-          .setCustomId('browse_unretire_image')
-          .setLabel('♻️ Unretire Image')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId('browse_delete_image')
-          .setLabel('🔥 Delete Forever')
-          .setStyle(ButtonStyle.Danger)
+          .setCustomId('gallery_jump')
+          .setLabel('Jump')
+          .setEmoji('🔢')
+          .setStyle(ButtonStyle.Secondary)
       );
 
-    // Sort and filter controls
-    const sortMenu = new StringSelectMenuBuilder()
-      .setCustomId('browse_images_sort')
-      .setPlaceholder('Sort by...')
+    // View controls - sort and filter
+    const sortSelect = new StringSelectMenuBuilder()
+      .setCustomId('gallery_sort')
+      .setPlaceholder('📊 Sort by...')
       .addOptions([
-        { label: 'ELO (High to Low)', value: 'elo', default: sortBy === 'elo' },
-        { label: 'Most Wins', value: 'wins', default: sortBy === 'wins' },
-        { label: 'Most Losses', value: 'losses', default: sortBy === 'losses' },
-        { label: 'Recently Added', value: 'recent', default: sortBy === 'recent' },
-        { label: 'Oldest First', value: 'oldest', default: sortBy === 'oldest' }
+        { label: '⭐ Highest ELO', value: 'elo', default: sortBy === 'elo', emoji: '⭐' },
+        { label: '🏆 Most Wins', value: 'wins', default: sortBy === 'wins', emoji: '🏆' },
+        { label: '💔 Most Losses', value: 'losses', default: sortBy === 'losses', emoji: '💔' },
+        { label: '🆕 Newest First', value: 'recent', default: sortBy === 'recent', emoji: '🆕' },
+        { label: '⏰ Oldest First', value: 'oldest', default: sortBy === 'oldest', emoji: '⏰' }
       ]);
 
-    const filterMenu = new StringSelectMenuBuilder()
-      .setCustomId('browse_images_filter')
-      .setPlaceholder('Filter...')
+    const filterSelect = new StringSelectMenuBuilder()
+      .setCustomId('gallery_filter')
+      .setPlaceholder('🔍 Filter...')
       .addOptions([
-        { label: 'All Images', value: 'all', default: filterActive === 'all' },
-        { label: 'Active Only', value: 'active', default: filterActive === 'active' },
-        { label: 'Retired Only', value: 'retired', default: filterActive === 'retired' }
+        { label: '📋 All Images', value: 'all', default: filterActive === 'all', emoji: '📋' },
+        { label: '✅ Active Only', value: 'active', default: filterActive === 'active', emoji: '✅' },
+        { label: '❌ Retired Only', value: 'retired', default: filterActive === 'retired', emoji: '❌' }
       ]);
 
-    const controlRow1 = new ActionRowBuilder().addComponents(sortMenu);
-    const controlRow2 = new ActionRowBuilder().addComponents(filterMenu);
+    const controlRow1 = new ActionRowBuilder().addComponents(sortSelect);
+    const controlRow2 = new ActionRowBuilder().addComponents(filterSelect);
 
-    const backButton = new ActionRowBuilder()
+    // Exit row
+    const exitRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('gallery_exit')
+          .setLabel('Exit Gallery')
+          .setEmoji('🚪')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    // Store state
+    const state = { index, sortBy, filterActive, imageId: image.id };
+
+    await interaction.editReply({
+      embeds: [embed],
+      components: [navRow, actionRow, controlRow1, controlRow2, exitRow],
+      content: `__GALLERY:${JSON.stringify(state)}__`
+    });
+  },
+
+  /**
+   * Show delete confirmation inline
+   */
+  async showDeleteConfirmation(interaction, imageId, state) {
+    await interaction.deferUpdate();
+
+    const guildId = interaction.guild.id;
+    
+    const result = await database.query(
+      'SELECT s3_key FROM images WHERE guild_id = $1 AND id = $2',
+      [guildId, imageId]
+    );
+
+    if (result.rows.length === 0) {
+      const errorEmbed = embedUtils.createErrorEmbed('Image not found.');
+      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0xFF0000)
+      .setTitle('⚠️ Confirm Deletion')
+      .setDescription(
+        `**Are you sure you want to permanently delete image #${imageId}?**\n\n` +
+        `This action:\n` +
+        `• Deletes from S3 storage\n` +
+        `• Removes from database\n` +
+        `• Deletes all votes & captions\n` +
+        `• **CANNOT BE UNDONE**\n\n` +
+        `Click "Yes, Delete" to confirm or "Cancel" to go back.`
+      );
+
+    const confirmRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('gallery_delete_yes')
+          .setLabel('Yes, Delete Forever')
+          .setEmoji('🔥')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('gallery_delete_cancel')
+          .setLabel('Cancel')
+          .setEmoji('❌')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({
+      embeds: [embed],
+      components: [confirmRow],
+      content: `__GALLERY:${JSON.stringify(state)}__`
+    });
+  },
+
+  /**
+   * Quick bulk retire with preset thresholds
+   */
+  async showQuickBulkRetire(interaction) {
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferUpdate();
+    }
+
+    const embed = embedUtils.createBaseEmbed();
+    embed.setTitle('🗑️ Quick Bulk Retire');
+    embed.setDescription(
+      `Select an ELO threshold below to retire all images below that ELO.\n\n` +
+      `**Common Thresholds:**\n` +
+      `• **800** - Remove very low performers\n` +
+      `• **900** - Remove below average\n` +
+      `• **1000** - Remove starting ELO and below\n\n` +
+      `You can also enter a custom threshold.`
+    );
+
+    const thresholdRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('bulk_retire_800')
+          .setLabel('Below 800')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('bulk_retire_900')
+          .setLabel('Below 900')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('bulk_retire_1000')
+          .setLabel('Below 1000')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('bulk_retire_custom')
+          .setLabel('Custom')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    const backRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_back_image_mgmt')
@@ -251,331 +357,158 @@ export default {
           .setStyle(ButtonStyle.Secondary)
       );
 
-    // Store state in content for navigation
-    const stateData = JSON.stringify({ page, sortBy, filterActive });
-
-    await interaction.editReply({ 
-      embeds: [embed], 
-      components: [navButtons, actionButtons, controlRow1, controlRow2, backButton],
-      content: `__BROWSE_STATE:${stateData}__`
+    await interaction.editReply({
+      embeds: [embed],
+      components: [thresholdRow, backRow]
     });
   },
 
   /**
-   * View detailed image info
+   * Quick bulk unretire with preset thresholds
    */
-  async viewImage(interaction, imageId) {
-    const guildId = interaction.guild.id;
-
-    const result = await database.query(
-      `SELECT * FROM images WHERE guild_id = $1 AND id = $2`,
-      [guildId, imageId]
-    );
-
-    if (result.rows.length === 0) {
-      const errorEmbed = embedUtils.createErrorEmbed('Image not found. Check the ID and try again.');
-      await interaction.editReply({ embeds: [errorEmbed] });
-      return;
+  async showQuickBulkUnretire(interaction) {
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.deferUpdate();
     }
 
-    const image = result.rows[0];
-    const imageUrl = await storage.getImageUrl(image.s3_key);
-    const winRate = eloService.calculateWinRate(image.wins, image.losses);
-    const status = image.retired ? '❌ RETIRED' : '✅ ACTIVE';
-
     const embed = embedUtils.createBaseEmbed();
-    embed.setTitle(`🖼️ Image Details — ID: ${image.id}`);
+    embed.setTitle('♻️ Quick Bulk Unretire');
     embed.setDescription(
-      `**Status:** ${status}\n` +
-      `━━━━━━━━━━━━━━━━━━━\n` +
-      `${eloService.getRankEmoji(image.elo)} **ELO:** \`${image.elo}\`\n` +
-      `**Record:** ${image.wins}W - ${image.losses}L\n` +
-      `**Win Rate:** ${winRate}%\n` +
-      `**Current Streak:** ${image.current_streak} 🔥\n` +
-      `**Best Streak:** ${image.best_streak} ⭐\n` +
-      `**Total Votes:** ${image.total_votes_received}\n` +
-      `**Uploader:** <@${image.uploader_id}>\n` +
-      `**Imported:** <t:${Math.floor(new Date(image.imported_at).getTime() / 1000)}:R>\n` +
-      `${image.retired ? `**Retired:** <t:${Math.floor(new Date(image.retired_at).getTime() / 1000)}:R>\n` : ''}`
+      `Select an ELO threshold below to unretire all retired images above that ELO.\n\n` +
+      `**Common Thresholds:**\n` +
+      `• **1000** - Unretire average and above\n` +
+      `• **1100** - Unretire above average\n` +
+      `• **1200** - Unretire good performers\n\n` +
+      `You can also enter a custom threshold.`
     );
 
-    embed.setImage(imageUrl);
-
-    // Action buttons specific to this image
-    const buttons = new ActionRowBuilder()
+    const thresholdRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId(`image_action_retire_${image.id}`)
-          .setLabel('🗑️ Retire')
-          .setStyle(ButtonStyle.Danger)
-          .setDisabled(image.retired),
+          .setCustomId('bulk_unretire_1000')
+          .setLabel('Above 1000')
+          .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-          .setCustomId(`image_action_unretire_${image.id}`)
-          .setLabel('♻️ Unretire')
-          .setStyle(ButtonStyle.Success)
-          .setDisabled(!image.retired),
+          .setCustomId('bulk_unretire_1100')
+          .setLabel('Above 1100')
+          .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-          .setCustomId(`image_action_delete_${image.id}`)
-          .setLabel('🔥 Delete Forever')
-          .setStyle(ButtonStyle.Danger)
-      );
-
-    const backButton = new ActionRowBuilder()
-      .addComponents(
+          .setCustomId('bulk_unretire_1200')
+          .setLabel('Above 1200')
+          .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-          .setCustomId('admin_browse_images')
-          .setLabel('◀ Back to Browser')
+          .setCustomId('bulk_unretire_custom')
+          .setLabel('Custom')
           .setStyle(ButtonStyle.Secondary)
       );
 
-    await interaction.editReply({ 
-      embeds: [embed], 
-      components: [buttons, backButton],
-      content: ''
+    const backRow = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('admin_back_image_mgmt')
+          .setLabel('◀ Back')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+    await interaction.editReply({
+      embeds: [embed],
+      components: [thresholdRow, backRow]
     });
   },
 
   /**
-   * Show filter/search interface
+   * Execute bulk retire
    */
-  async showFilterInterface(interaction) {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_filter_images')
-      .setTitle('Filter Images');
+  async executeBulkRetire(interaction, threshold) {
+    await interaction.deferUpdate();
 
-    const eloMinInput = new TextInputBuilder()
-      .setCustomId('elo_min')
-      .setLabel('Minimum ELO (optional)')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('e.g., 800')
-      .setRequired(false);
-
-    const eloMaxInput = new TextInputBuilder()
-      .setCustomId('elo_max')
-      .setLabel('Maximum ELO (optional)')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('e.g., 1500')
-      .setRequired(false);
-
-    const uploaderInput = new TextInputBuilder()
-      .setCustomId('uploader_id')
-      .setLabel('Uploader ID (optional)')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Discord user ID')
-      .setRequired(false);
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(eloMinInput),
-      new ActionRowBuilder().addComponents(eloMaxInput),
-      new ActionRowBuilder().addComponents(uploaderInput)
-    );
-
-    await interaction.showModal(modal);
-  },
-
-  /**
-   * Handle filter results
-   */
-  async handleFilterResults(interaction, filters) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    const { eloMin, eloMax, uploaderId } = filters;
     const guildId = interaction.guild.id;
 
-    let whereClauses = ['guild_id = $1'];
-    let params = [guildId];
-    let paramIndex = 2;
+    const countResult = await database.query(
+      'SELECT COUNT(*) as total FROM images WHERE guild_id = $1 AND elo < $2 AND retired = false',
+      [guildId, threshold]
+    );
 
-    if (eloMin) {
-      whereClauses.push(`elo >= $${paramIndex}`);
-      params.push(parseInt(eloMin));
-      paramIndex++;
+    const count = parseInt(countResult.rows[0].total);
+
+    if (count === 0) {
+      const embed = embedUtils.createSuccessEmbed(`No images found with ELO below ${threshold}.`);
+      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      return;
     }
 
-    if (eloMax) {
-      whereClauses.push(`elo <= $${paramIndex}`);
-      params.push(parseInt(eloMax));
-      paramIndex++;
+    // Retire them
+    await database.query(
+      'UPDATE images SET retired = true, retired_at = NOW() WHERE guild_id = $1 AND elo < $2 AND retired = false',
+      [guildId, threshold]
+    );
+
+    // Log
+    await database.query(
+      `INSERT INTO logs (guild_id, action_type, admin_id, details)
+       VALUES ($1, 'bulk_retire', $2, $3)`,
+      [guildId, interaction.user.id, JSON.stringify({ threshold, count })]
+    );
+
+    const embed = embedUtils.createSuccessEmbed(
+      `✅ Retired **${count}** image(s) with ELO below ${threshold}!`
+    );
+
+    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+
+    // Go back to image management
+    const config = await database.query(
+      'SELECT * FROM guild_config WHERE guild_id = $1',
+      [guildId]
+    );
+    await this.showImageManagement(interaction, config.rows[0]);
+  },
+
+  /**
+   * Execute bulk unretire
+   */
+  async executeBulkUnretire(interaction, threshold) {
+    await interaction.deferUpdate();
+
+    const guildId = interaction.guild.id;
+
+    const countResult = await database.query(
+      'SELECT COUNT(*) as total FROM images WHERE guild_id = $1 AND elo >= $2 AND retired = true',
+      [guildId, threshold]
+    );
+
+    const count = parseInt(countResult.rows[0].total);
+
+    if (count === 0) {
+      const embed = embedUtils.createSuccessEmbed(`No retired images found with ELO above ${threshold}.`);
+      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      return;
     }
 
-    if (uploaderId) {
-      whereClauses.push(`uploader_id = $${paramIndex}`);
-      params.push(uploaderId);
-      paramIndex++;
-    }
-
-    const whereClause = whereClauses.join(' AND ');
-
-    const result = await database.query(
-      `SELECT COUNT(*) as total,
-              COUNT(*) FILTER (WHERE retired = false) as active,
-              AVG(elo) as avg_elo
-       FROM images
-       WHERE ${whereClause}`,
-      params
+    // Unretire them
+    await database.query(
+      'UPDATE images SET retired = false, retired_at = NULL WHERE guild_id = $1 AND elo >= $2 AND retired = true',
+      [guildId, threshold]
     );
 
-    const { total, active, avg_elo } = result.rows[0];
-
-    const embed = embedUtils.createBaseEmbed();
-    embed.setTitle('━━━━━ 🔍 Filter Results ━━━━━');
-    embed.setDescription(
-      `**Filters Applied:**\n` +
-      `${eloMin ? `• Min ELO: ${eloMin}\n` : ''}` +
-      `${eloMax ? `• Max ELO: ${eloMax}\n` : ''}` +
-      `${uploaderId ? `• Uploader: <@${uploaderId}>\n` : ''}` +
-      `\n**Results:**\n` +
-      `Total: ${total}  •  Active: ${active}\n` +
-      `Average ELO: ${Math.round(avg_elo || 0)}`
+    // Log
+    await database.query(
+      `INSERT INTO logs (guild_id, action_type, admin_id, details)
+       VALUES ($1, 'bulk_unretire', $2, $3)`,
+      [guildId, interaction.user.id, JSON.stringify({ threshold, count })]
     );
 
-    await interaction.editReply({ embeds: [embed] });
-  },
-
-  /**
-   * Show bulk retire interface
-   */
-  async showBulkRetire(interaction) {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_bulk_retire')
-      .setTitle('Bulk Retire Images');
-
-    const thresholdInput = new TextInputBuilder()
-      .setCustomId('elo_threshold')
-      .setLabel('Retire all images below this ELO')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('e.g., 800')
-      .setRequired(true);
-
-    const confirmInput = new TextInputBuilder()
-      .setCustomId('confirm_text')
-      .setLabel('Type CONFIRM to proceed')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('CONFIRM')
-      .setRequired(true);
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(thresholdInput),
-      new ActionRowBuilder().addComponents(confirmInput)
+    const embed = embedUtils.createSuccessEmbed(
+      `✅ Unretired **${count}** image(s) with ELO above ${threshold}!`
     );
 
-    await interaction.showModal(modal);
-  },
+    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
 
-  /**
-   * Show bulk unretire interface
-   */
-  async showBulkUnretire(interaction) {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_bulk_unretire')
-      .setTitle('Bulk Unretire Images');
-
-    const thresholdInput = new TextInputBuilder()
-      .setCustomId('elo_threshold')
-      .setLabel('Unretire all retired images above this ELO')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('e.g., 1000')
-      .setRequired(true);
-
-    const confirmInput = new TextInputBuilder()
-      .setCustomId('confirm_text')
-      .setLabel('Type CONFIRM to proceed')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('CONFIRM')
-      .setRequired(true);
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(thresholdInput),
-      new ActionRowBuilder().addComponents(confirmInput)
+    // Go back to image management
+    const config = await database.query(
+      'SELECT * FROM guild_config WHERE guild_id = $1',
+      [guildId]
     );
-
-    await interaction.showModal(modal);
-  },
-
-  /**
-   * Show view image modal
-   */
-  createViewImageModal() {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_view_image')
-      .setTitle('View Image Details');
-
-    const input = new TextInputBuilder()
-      .setCustomId('image_id')
-      .setLabel('Image ID')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Enter image ID from the list')
-      .setRequired(true);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    return modal;
-  },
-
-  /**
-   * Show retire image modal
-   */
-  createRetireImageModal() {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_retire_image')
-      .setTitle('Retire Image');
-
-    const input = new TextInputBuilder()
-      .setCustomId('image_id')
-      .setLabel('Image ID to retire')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Enter image ID')
-      .setRequired(true);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    return modal;
-  },
-
-  /**
-   * Show unretire image modal
-   */
-  createUnretireImageModal() {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_unretire_image')
-      .setTitle('Unretire Image');
-
-    const input = new TextInputBuilder()
-      .setCustomId('image_id')
-      .setLabel('Image ID to unretire')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Enter image ID')
-      .setRequired(true);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    return modal;
-  },
-
-  /**
-   * Show delete image modal
-   */
-  createDeleteImageModal() {
-    const modal = new ModalBuilder()
-      .setCustomId('modal_delete_image')
-      .setTitle('Delete Image Forever');
-
-    const idInput = new TextInputBuilder()
-      .setCustomId('image_id')
-      .setLabel('Image ID to delete')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Enter image ID')
-      .setRequired(true);
-
-    const confirmInput = new TextInputBuilder()
-      .setCustomId('confirm_delete')
-      .setLabel('Type DELETE to confirm permanent deletion')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('DELETE')
-      .setRequired(true);
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(idInput),
-      new ActionRowBuilder().addComponents(confirmInput)
-    );
-
-    return modal;
+    await this.showImageManagement(interaction, config.rows[0]);
   }
 };
