@@ -1,53 +1,147 @@
 /**
- * Duel Manager Service
- * Coordinates the entire duel lifecycle
- * Handles scheduling, starting, and ending duels
+ * Duel Manager with Redis Persistence Recovery
+ * Automatically resumes duels after bot restart
  */
 
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import database from '../../database/database.js';
+import redis from '../../database/redis.js';
 import selector from './selector.js';
 import resolver from './resolver.js';
-import storage from '../image/storage.js';
 import embedUtils from '../../utils/embeds.js';
-import cache from '../cache/manager.js';
+import storage from '../image/storage.js';
 
 class DuelManager {
   constructor() {
-    this.timers = new Map(); // guildId -> timeout
     this.client = null;
+    this.activeTimers = new Map();
   }
 
-  /**
-   * Initialize with Discord client
-   * @param {Client} client - Discord.js client
-   */
   setClient(client) {
     this.client = client;
   }
 
   /**
-   * Start scheduling for all guilds
+   * Start duel system for all guilds (called on bot startup)
    */
   async startAllGuilds() {
-    const result = await database.query(
-      'SELECT guild_id FROM guild_config WHERE duel_channel_id IS NOT NULL'
-    );
+    try {
+      const result = await database.query(
+        'SELECT guild_id FROM guild_config WHERE duel_active = true'
+      );
 
-    for (const row of result.rows) {
-      await this.checkGuild(row.guild_id);
+      for (const row of result.rows) {
+        const guildId = row.guild_id;
+        
+        // Check for existing active duel in database
+        const activeDuel = await database.query(
+          'SELECT * FROM active_duels WHERE guild_id = $1',
+          [guildId]
+        );
+
+        if (activeDuel.rows.length > 0) {
+          console.log(`🔄 Resuming active duel for guild ${guildId}...`);
+          await this.resumeActiveDuel(guildId, activeDuel.rows[0]);
+        } else {
+          console.log(`✅ Starting duel scheduler for guild ${guildId}...`);
+          await this.checkGuild(guildId);
+        }
+      }
+
+      console.log('✅ Duel system initialized for all guilds');
+    } catch (error) {
+      console.error('Error starting duel system:', error);
     }
-
-    console.log('✅ Duel system initialized for all guilds');
   }
 
   /**
-   * Check and schedule duel for a guild
-   * @param {string} guildId - Guild ID
+   * Resume an active duel after bot restart
+   */
+  async resumeActiveDuel(guildId, activeDuelRow) {
+    try {
+      const duelId = activeDuelRow.duel_id;
+      const endsAt = new Date(activeDuelRow.ends_at);
+      const now = new Date();
+
+      // Check if duel has already ended
+      if (endsAt <= now) {
+        console.log(`⏰ Duel ${duelId} expired, ending now...`);
+        await this.endDuel(guildId);
+        await this.checkGuild(guildId); // Start next duel
+        return;
+      }
+
+      // Get duel details
+      const duelResult = await database.query(
+        `SELECT d.*, 
+          i1.s3_key as image1_s3_key, i1.elo as image1_elo, i1.wins as image1_wins, i1.losses as image1_losses,
+          i2.s3_key as image2_s3_key, i2.elo as image2_elo, i2.wins as image2_wins, i2.losses as image2_losses
+         FROM duels d
+         JOIN images i1 ON d.image1_id = i1.id
+         JOIN images i2 ON d.image2_id = i2.id
+         WHERE d.id = $1`,
+        [duelId]
+      );
+
+      if (duelResult.rows.length === 0) {
+        console.error(`Duel ${duelId} not found in database!`);
+        await database.query('DELETE FROM active_duels WHERE guild_id = $1', [guildId]);
+        await this.checkGuild(guildId);
+        return;
+      }
+
+      const duel = duelResult.rows[0];
+
+      // Restore to Redis
+      const duelData = {
+        duelId: duel.id,
+        image1: {
+          id: duel.image1_id,
+          s3_key: duel.image1_s3_key,
+          elo: duel.image1_elo,
+          wins: duel.image1_wins,
+          losses: duel.image1_losses
+        },
+        image2: {
+          id: duel.image2_id,
+          s3_key: duel.image2_s3_key,
+          elo: duel.image2_elo,
+          wins: duel.image2_wins,
+          losses: duel.image2_losses
+        },
+        startedAt: new Date(duel.started_at),
+        endsAt: endsAt,
+        messageId: activeDuelRow.message_id
+      };
+
+      // Save to Redis
+      await redis.setActiveDuel(guildId, duelData);
+
+      console.log(`✅ Restored duel ${duelId} for guild ${guildId}`);
+
+      // Set timer for remaining time
+      const remainingTime = endsAt - now;
+      const timer = setTimeout(() => {
+        this.endDuel(guildId);
+      }, remainingTime);
+
+      this.activeTimers.set(guildId, timer);
+
+      console.log(`⏰ Duel will end in ${Math.round(remainingTime / 1000)}s`);
+
+    } catch (error) {
+      console.error('Error resuming active duel:', error);
+      // If resumption fails, clean up and start fresh
+      await database.query('DELETE FROM active_duels WHERE guild_id = $1', [guildId]);
+      await this.checkGuild(guildId);
+    }
+  }
+
+  /**
+   * Check if a guild should start a new duel
    */
   async checkGuild(guildId) {
     try {
-      // Get config
+      // Get guild config
       const configResult = await database.query(
         'SELECT * FROM guild_config WHERE guild_id = $1',
         [guildId]
@@ -57,180 +151,160 @@ class DuelManager {
 
       const config = configResult.rows[0];
 
-      // Skip if paused or no channel set
-      if (config.duel_paused || !config.duel_channel_id) return;
+      // Check if duels are active and not paused
+      if (!config.duel_active || config.duel_paused) return;
 
-      // Check for active duel
-      const activeDuel = await this.getActiveDuel(guildId);
+      // Check if there's already an active duel
+      const activeDuelCheck = await database.query(
+        'SELECT * FROM active_duels WHERE guild_id = $1',
+        [guildId]
+      );
 
-      if (activeDuel) {
-        // Schedule end if not already scheduled
-        const now = Date.now();
-        const endsAt = new Date(activeDuel.ends_at).getTime();
-
-        if (endsAt > now && !this.timers.has(guildId)) {
-          this.scheduleEnd(guildId, endsAt - now);
-        } else if (endsAt <= now) {
-          // Duel should have ended
-          await this.endDuel(guildId);
-        }
-      } else {
-        // No active duel, start one
-        await this.startDuel(guildId);
+      if (activeDuelCheck.rows.length > 0) {
+        console.log(`Guild ${guildId} already has an active duel`);
+        return;
       }
+
+      // Start new duel
+      await this.createNewDuel(guildId, config);
     } catch (error) {
       console.error(`Error checking guild ${guildId}:`, error);
     }
   }
 
   /**
-   * Get active duel for a guild
-   * @param {string} guildId - Guild ID
-   * @returns {Promise<Object|null>} Active duel or null
+   * Create and start a new duel
    */
-  async getActiveDuel(guildId) {
-    const result = await database.query(
-      `SELECT ad.*, 
-        i1.s3_key as image1_s3_key, i1.elo as image1_elo,
-        i2.s3_key as image2_s3_key, i2.elo as image2_elo
-       FROM active_duels ad
-       JOIN images i1 ON ad.image1_id = i1.id
-       JOIN images i2 ON ad.image2_id = i2.id
-       WHERE ad.guild_id = $1`,
-      [guildId]
-    );
-
-    if (result.rows.length === 0) return null;
-
-    const row = result.rows[0];
-    return {
-      duelId: row.duel_id,
-      image1: { id: row.image1_id, s3_key: row.image1_s3_key, elo: row.image1_elo },
-      image2: { id: row.image2_id, s3_key: row.image2_s3_key, elo: row.image2_elo },
-      messageId: row.message_id,
-      ends_at: row.ends_at
-    };
-  }
-
-  /**
-   * Start a new duel
-   * @param {string} guildId - Guild ID
-   */
-  async startDuel(guildId) {
+  async createNewDuel(guildId, config) {
     try {
-      // Get config
-      const configResult = await database.query(
-        'SELECT * FROM guild_config WHERE guild_id = $1',
-        [guildId]
-      );
-
-      if (configResult.rows.length === 0) return;
-
-      const config = configResult.rows[0];
-
-      // Select pair
+      // Select two images
       const pair = await selector.selectPair(guildId);
 
       if (!pair) {
-        console.log(`⚠️ Could not select pair for guild ${guildId}`);
+        console.log(`No images available for duel in guild ${guildId}`);
         return;
       }
 
-      // Calculate end time
-      const endsAt = new Date(Date.now() + config.duel_duration * 1000);
-
-      // Create duel record
-      const duelResult = await database.query(
+      // Create duel in database
+      const result = await database.query(
         `INSERT INTO duels (guild_id, image1_id, image2_id, started_at)
          VALUES ($1, $2, $3, NOW())
          RETURNING id`,
         [guildId, pair.image1.id, pair.image2.id]
       );
 
-      const duelId = duelResult.rows[0].id;
+      const duelId = result.rows[0].id;
 
-      // Create active duel record
+      // Calculate end time
+      const now = new Date();
+      const endsAt = new Date(now.getTime() + config.duel_duration * 1000);
+
+      // Store in active_duels table
       await database.query(
-        `INSERT INTO active_duels (guild_id, duel_id, image1_id, image2_id, ends_at)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (guild_id) DO UPDATE
-         SET duel_id = $2, image1_id = $3, image2_id = $4, ends_at = $5, message_id = NULL`,
-        [guildId, duelId, pair.image1.id, pair.image2.id, endsAt]
+        `INSERT INTO active_duels (guild_id, duel_id, ends_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (guild_id) 
+         DO UPDATE SET duel_id = $2, ends_at = $3, created_at = NOW()`,
+        [guildId, duelId, endsAt]
       );
 
-      // Get channel
-      const channel = await this.client.channels.fetch(config.duel_channel_id);
+      // Store in Redis
+      const duelData = {
+        duelId,
+        image1: pair.image1,
+        image2: pair.image2,
+        startedAt: now,
+        endsAt: endsAt
+      };
 
-      if (!channel) {
-        console.log(`⚠️ Could not fetch channel for guild ${guildId}`);
-        return;
-      }
+      await redis.setActiveDuel(guildId, duelData);
 
-      // Get signed URLs
-      const image1Url = await storage.getImageUrl(pair.image1.s3_key);
-      const image2Url = await storage.getImageUrl(pair.image2.s3_key);
+      // Post duel message
+      const messageId = await this.postDuelMessage(guildId, config, pair);
 
-      // Create embeds
-      const embeds = embedUtils.createDuelEmbed(
-        { image1: pair.image1, image2: pair.image2, isWildcard: false },
-        image1Url,
-        image2Url,
-        endsAt,
-        { image1: [], image2: [] }
-      );
-
-      // Create buttons
-      const buttons = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(`vote_${pair.image1.id}`)
-            .setLabel('Vote A')
-            .setStyle(ButtonStyle.Primary)
-            .setEmoji('📸'),
-          new ButtonBuilder()
-            .setCustomId(`vote_${pair.image2.id}`)
-            .setLabel('Vote B')
-            .setStyle(ButtonStyle.Primary)
-            .setEmoji('📸')
-        );
-
-      // Send message
-      const message = await channel.send({ embeds, components: [buttons] });
-
-      // Update active duel with message ID
+      // Update message_id in database
       await database.query(
         'UPDATE active_duels SET message_id = $1 WHERE guild_id = $2',
-        [message.id, guildId]
+        [messageId, guildId]
       );
 
-      // Update config
-      await database.query(
-        'UPDATE guild_config SET duel_active = true WHERE guild_id = $1',
-        [guildId]
-      );
+      duelData.messageId = messageId;
+      await redis.setActiveDuel(guildId, duelData);
 
-      // Schedule end
-      this.scheduleEnd(guildId, config.duel_duration * 1000);
+      // Set timer
+      const timer = setTimeout(() => {
+        this.endDuel(guildId);
+      }, config.duel_duration * 1000);
 
-      console.log(`✅ Duel started for guild ${guildId}`);
+      this.activeTimers.set(guildId, timer);
+
+      console.log(`🎮 Started duel ${duelId} for guild ${guildId}`);
     } catch (error) {
-      console.error(`Error starting duel for guild ${guildId}:`, error);
+      console.error('Error creating new duel:', error);
     }
   }
 
   /**
-   * End current duel
-   * @param {string} guildId - Guild ID
+   * Post duel message to channel
+   */
+  async postDuelMessage(guildId, config, pair) {
+    try {
+      const channel = await this.client.channels.fetch(config.duel_channel_id);
+
+      if (!channel) {
+        throw new Error('Duel channel not found');
+      }
+
+      // Get image URLs
+      const url1 = await storage.getImageUrl(pair.image1.s3_key);
+      const url2 = await storage.getImageUrl(pair.image2.s3_key);
+
+      // Create embed
+      const embed = embedUtils.createDuelEmbed(pair.image1, pair.image2, url1, url2, pair.endsAt);
+
+      // Create buttons
+      const row = embedUtils.createVoteButtons(pair.image1.id, pair.image2.id);
+
+      const message = await channel.send({ embeds: [embed], components: [row] });
+
+      return message.id;
+    } catch (error) {
+      console.error('Error posting duel message:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * End the current duel
    */
   async endDuel(guildId) {
     try {
-      // Clear timer
-      if (this.timers.has(guildId)) {
-        clearTimeout(this.timers.get(guildId));
-        this.timers.delete(guildId);
+      console.log(`⏰ Ending duel for guild ${guildId}...`);
+
+      // Get active duel
+      const activeDuel = await this.getActiveDuel(guildId);
+
+      if (!activeDuel) {
+        console.log('No active duel found');
+        return;
       }
 
-      // Get config
+      // Resolve duel (count votes, update ELO, check retirement)
+      await resolver.resolveDuel(guildId, activeDuel.duelId, this.client);
+
+      // Clear from database
+      await database.query('DELETE FROM active_duels WHERE guild_id = $1', [guildId]);
+
+      // Clear from Redis
+      await redis.clearActiveDuel(guildId);
+
+      // Clear timer
+      if (this.activeTimers.has(guildId)) {
+        clearTimeout(this.activeTimers.get(guildId));
+        this.activeTimers.delete(guildId);
+      }
+
+      // Get guild config
       const configResult = await database.query(
         'SELECT * FROM guild_config WHERE guild_id = $1',
         [guildId]
@@ -240,130 +314,119 @@ class DuelManager {
 
       const config = configResult.rows[0];
 
-      // Get active duel
-      const activeDuel = await this.getActiveDuel(guildId);
+      // Schedule next duel
+      const nextDuelTimer = setTimeout(() => {
+        this.checkGuild(guildId);
+      }, config.duel_interval * 1000);
 
-      if (!activeDuel) return;
+      this.activeTimers.set(`${guildId}_next`, nextDuelTimer);
 
-      // Resolve duel
-      const results = await resolver.resolveDuel(
-        guildId,
-        activeDuel.duelId,
-        activeDuel.image1.id,
-        activeDuel.image2.id,
-        config.k_factor,
-        config.duel_interval
-      );
+      console.log(`✅ Duel ended, next duel in ${config.duel_interval / 60} minutes`);
+    } catch (error) {
+      console.error('Error ending duel:', error);
+    }
+  }
 
-      // Delete active duel
-      await database.query(
-        'DELETE FROM active_duels WHERE guild_id = $1',
-        [guildId]
-      );
+  /**
+   * Get active duel from Redis (with database fallback)
+   */
+  async getActiveDuel(guildId) {
+    try {
+      // Try Redis first
+      let duel = await redis.getActiveDuel(guildId);
 
-      // Update config
-      await database.query(
-        'UPDATE guild_config SET duel_active = false WHERE guild_id = $1',
-        [guildId]
-      );
+      // Fallback to database if not in Redis
+      if (!duel) {
+        const result = await database.query(
+          `SELECT ad.*, d.*,
+            i1.s3_key as image1_s3_key, i1.elo as image1_elo, i1.wins as image1_wins, i1.losses as image1_losses,
+            i2.s3_key as image2_s3_key, i2.elo as image2_elo, i2.wins as image2_wins, i2.losses as image2_losses
+           FROM active_duels ad
+           JOIN duels d ON ad.duel_id = d.id
+           JOIN images i1 ON d.image1_id = i1.id
+           JOIN images i2 ON d.image2_id = i2.id
+           WHERE ad.guild_id = $1`,
+          [guildId]
+        );
 
-      // Get channel
-      const channel = await this.client.channels.fetch(config.duel_channel_id);
+        if (result.rows.length > 0) {
+          const row = result.rows[0];
+          duel = {
+            duelId: row.duel_id,
+            image1: {
+              id: row.image1_id,
+              s3_key: row.image1_s3_key,
+              elo: row.image1_elo,
+              wins: row.image1_wins,
+              losses: row.image1_losses
+            },
+            image2: {
+              id: row.image2_id,
+              s3_key: row.image2_s3_key,
+              elo: row.image2_elo,
+              wins: row.image2_wins,
+              losses: row.image2_losses
+            },
+            startedAt: new Date(row.started_at),
+            endsAt: new Date(row.ends_at),
+            messageId: row.message_id
+          };
 
-      if (channel) {
-        // Remove buttons from original message
-        if (activeDuel.messageId) {
-          try {
-            const originalMessage = await channel.messages.fetch(activeDuel.messageId);
-            await originalMessage.edit({ components: [] });
-          } catch (err) {
-            // Message might be deleted, ignore
-          }
-        }
-
-        // Post results
-        if (!results.skipped) {
-          const winnerUrl = await storage.getImageUrl(results.winner.s3_key);
-          const loserUrl = await storage.getImageUrl(results.loser.s3_key);
-          
-          const resultsEmbed = embedUtils.createDuelResultsEmbed(
-            results,
-            winnerUrl,
-            loserUrl
-          );
-
-          await channel.send({ embeds: [resultsEmbed] });
-        } else {
-          const skipEmbed = embedUtils.createDuelResultsEmbed(results, null, null);
-          await channel.send({ embeds: [skipEmbed] });
+          // Restore to Redis
+          await redis.setActiveDuel(guildId, duel);
         }
       }
 
-      // Schedule next duel
-      setTimeout(() => {
-        this.startDuel(guildId);
-      }, config.duel_interval * 1000);
-
-      console.log(`✅ Duel ended for guild ${guildId}`);
+      return duel;
     } catch (error) {
-      console.error(`Error ending duel for guild ${guildId}:`, error);
+      console.error('Error getting active duel:', error);
+      return null;
     }
   }
 
   /**
-   * Schedule duel end
-   * @param {string} guildId - Guild ID
-   * @param {number} delay - Delay in milliseconds
+   * Start duel system (admin action)
    */
-  scheduleEnd(guildId, delay) {
-    const timer = setTimeout(() => {
-      this.endDuel(guildId);
-    }, delay);
-
-    this.timers.set(guildId, timer);
-  }
-
-  /**
-   * Stop duels for a guild
-   * @param {string} guildId - Guild ID
-   */
-  async stopDuel(guildId) {
-    // Clear timer
-    if (this.timers.has(guildId)) {
-      clearTimeout(this.timers.get(guildId));
-      this.timers.delete(guildId);
-    }
-
-    // Delete active duel
+  async startDuel(guildId) {
     await database.query(
-      'DELETE FROM active_duels WHERE guild_id = $1',
+      'UPDATE guild_config SET duel_active = true, duel_paused = false WHERE guild_id = $1',
       [guildId]
     );
 
-    // Update config
+    await this.checkGuild(guildId);
+  }
+
+  /**
+   * Stop duel system (admin action)
+   */
+  async stopDuel(guildId) {
     await database.query(
       'UPDATE guild_config SET duel_active = false, duel_paused = false WHERE guild_id = $1',
       [guildId]
     );
 
-    console.log(`⏹️ Duels stopped for guild ${guildId}`);
+    // Clear timers
+    if (this.activeTimers.has(guildId)) {
+      clearTimeout(this.activeTimers.get(guildId));
+      this.activeTimers.delete(guildId);
+    }
+
+    if (this.activeTimers.has(`${guildId}_next`)) {
+      clearTimeout(this.activeTimers.get(`${guildId}_next`));
+      this.activeTimers.delete(`${guildId}_next`);
+    }
   }
 
   /**
-   * Skip current duel
-   * @param {string} guildId - Guild ID
+   * Skip current duel (admin action)
    */
   async skipDuel(guildId) {
-    // End current duel
     await this.endDuel(guildId);
-
-    // Clear active duel to force new pair
-    await database.query(
-      'DELETE FROM active_duels WHERE guild_id = $1',
-      [guildId]
-    );
-
-    console.log(`⏭️ Duel skipped for guild ${guildId}`);
+    
+    // Immediately start next duel
+    setTimeout(() => {
+      this.checkGuild(guildId);
+    }, 2000);
   }
 }
 
