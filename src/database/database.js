@@ -95,14 +95,13 @@ class Database {
         )
       `);
 
-      // Create active_duels table
+      // Create active_duels table (simplified - no created_at column)
       await this.query(`
         CREATE TABLE IF NOT EXISTS active_duels (
           guild_id TEXT PRIMARY KEY,
           duel_id INTEGER REFERENCES duels(id) ON DELETE CASCADE,
           message_id TEXT,
-          ends_at TIMESTAMP NOT NULL,
-          created_at TIMESTAMP DEFAULT NOW()
+          ends_at TIMESTAMP NOT NULL
         )
       `);
 
@@ -126,6 +125,17 @@ class Database {
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                         WHERE table_name='guild_config' AND column_name='retire_below_elo') THEN
             ALTER TABLE guild_config ADD COLUMN retire_below_elo INTEGER DEFAULT 0;
+          END IF;
+        END $$;
+      `);
+
+      // Remove created_at column from active_duels if it exists (migration)
+      await this.query(`
+        DO $$ 
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='active_duels' AND column_name='created_at') THEN
+            ALTER TABLE active_duels DROP COLUMN created_at;
           END IF;
         END $$;
       `);
