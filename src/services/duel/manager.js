@@ -199,7 +199,7 @@ class DuelManager {
       const now = new Date();
       const endsAt = new Date(now.getTime() + config.duel_duration * 1000);
 
-      // Store in active_duels table (removed created_at)
+      // Store in active_duels table
       await database.query(
         `INSERT INTO active_duels (guild_id, duel_id, ends_at)
          VALUES ($1, $2, $3)
@@ -219,8 +219,8 @@ class DuelManager {
 
       await redis.setActiveDuel(guildId, duelData);
 
-      // Post duel message
-      const messageId = await this.postDuelMessage(guildId, config, pair);
+      // Post duel message (pass endsAt separately)
+      const messageId = await this.postDuelMessage(guildId, config, pair, endsAt);
 
       // Update message_id in database
       await database.query(
@@ -247,7 +247,7 @@ class DuelManager {
   /**
    * Post duel message to channel
    */
-  async postDuelMessage(guildId, config, pair) {
+  async postDuelMessage(guildId, config, pair, endsAt) {
     try {
       const channel = await this.client.channels.fetch(config.duel_channel_id);
 
@@ -259,8 +259,8 @@ class DuelManager {
       const url1 = await storage.getImageUrl(pair.image1.s3_key);
       const url2 = await storage.getImageUrl(pair.image2.s3_key);
 
-      // Create embed
-      const embed = embedUtils.createDuelEmbed(pair.image1, pair.image2, url1, url2, pair.endsAt);
+      // Create embed (pass endsAt as 5th parameter)
+      const embed = embedUtils.createDuelEmbed(pair.image1, pair.image2, url1, url2, endsAt);
 
       // Create buttons
       const row = embedUtils.createVoteButtons(pair.image1.id, pair.image2.id);
