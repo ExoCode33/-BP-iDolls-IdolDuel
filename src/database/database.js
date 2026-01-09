@@ -95,9 +95,12 @@ class Database {
         )
       `);
 
-      // Create active_duels table (simplified - no created_at column)
+      // FIX: Drop and recreate active_duels table to ensure correct schema
+      // This fixes the "created_at column doesn't exist" error
+      await this.query(`DROP TABLE IF EXISTS active_duels CASCADE`);
+      
       await this.query(`
-        CREATE TABLE IF NOT EXISTS active_duels (
+        CREATE TABLE active_duels (
           guild_id TEXT PRIMARY KEY,
           duel_id INTEGER REFERENCES duels(id) ON DELETE CASCADE,
           message_id TEXT,
@@ -113,7 +116,7 @@ class Database {
       await this.query('CREATE INDEX IF NOT EXISTS idx_votes_duel_id ON votes(duel_id)');
       await this.query('CREATE INDEX IF NOT EXISTS idx_active_duels_guild_id ON active_duels(guild_id)');
 
-      // Add columns to existing guild_config if they don't exist (migration)
+      // Add retirement columns to existing guild_config if they don't exist (migration)
       await this.query(`
         DO $$ 
         BEGIN
@@ -125,17 +128,6 @@ class Database {
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                         WHERE table_name='guild_config' AND column_name='retire_below_elo') THEN
             ALTER TABLE guild_config ADD COLUMN retire_below_elo INTEGER DEFAULT 0;
-          END IF;
-        END $$;
-      `);
-
-      // Remove created_at column from active_duels if it exists (migration)
-      await this.query(`
-        DO $$ 
-        BEGIN
-          IF EXISTS (SELECT 1 FROM information_schema.columns 
-                    WHERE table_name='active_duels' AND column_name='created_at') THEN
-            ALTER TABLE active_duels DROP COLUMN created_at;
           END IF;
         END $$;
       `);
