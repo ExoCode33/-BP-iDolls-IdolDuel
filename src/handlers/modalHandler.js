@@ -127,6 +127,30 @@ export async function handleModalSubmit(interaction) {
     await handleBulkUnretireModal(interaction);
     return;
   }
+
+  // NEW: Jump to image modal
+  if (modalId === 'modal_jump_to_image') {
+    await handleJumpToImageModal(interaction);
+    return;
+  }
+
+  // NEW: Gallery jump modal
+  if (modalId === 'modal_gallery_jump') {
+    await handleGalleryJump(interaction);
+    return;
+  }
+
+  // NEW: Bulk retire custom modal
+  if (modalId === 'modal_bulk_retire_custom') {
+    await handleBulkRetireCustom(interaction);
+    return;
+  }
+
+  // NEW: Bulk unretire custom modal
+  if (modalId === 'modal_bulk_unretire_custom') {
+    await handleBulkUnretireCustom(interaction);
+    return;
+  }
 }
 
 async function handleKFactorModal(interaction) {
@@ -1013,6 +1037,100 @@ async function handleBulkUnretireModal(interaction) {
     const errorEmbed = embedUtils.createErrorEmbed('Failed to unretire images.');
     await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
   }
+}
+
+async function handleJumpToImageModal(interaction) {
+  await interaction.deferUpdate();
+
+  try {
+    const imageNumber = parseInt(interaction.fields.getTextInputValue('image_index'));
+    
+    if (isNaN(imageNumber) || imageNumber < 1) {
+      throw new Error('Invalid image number');
+    }
+
+    // Get state from message
+    const content = interaction.message.content;
+    const match = content.match(/__GALLERY_STATE:(.+?)__/);
+    
+    if (!match) {
+      throw new Error('Gallery state not found');
+    }
+    
+    const state = JSON.parse(match[1]);
+    const { sortBy, filterActive, totalImages } = state;
+    
+    if (imageNumber > totalImages) {
+      const errorEmbed = embedUtils.createErrorEmbed(`Image number must be between 1 and ${totalImages}.`);
+      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+      return;
+    }
+    
+    // Convert to 0-indexed
+    const index = imageNumber - 1;
+    
+    // Jump to that image
+    await imageManagement.showGalleryView(interaction, index, sortBy, filterActive);
+  } catch (error) {
+    console.error('Error jumping to image:', error);
+    const errorEmbed = embedUtils.createErrorEmbed('Invalid image number. Please enter a valid number.');
+    await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
+  }
+}
+
+// NEW: Handle gallery jump (redesigned gallery)
+async function handleGalleryJump(interaction) {
+  await interaction.deferUpdate();
+  
+  try {
+    const jumpTo = parseInt(interaction.fields.getTextInputValue('jump_index'));
+    
+    if (isNaN(jumpTo) || jumpTo < 1) {
+      throw new Error('Invalid number');
+    }
+    
+    const content = interaction.message.content;
+    const match = content.match(/__GALLERY:(.+?)__/);
+    const state = match ? JSON.parse(match[1]) : { sortBy: 'elo', filterActive: 'all' };
+    
+    const index = jumpTo - 1;
+    
+    await imageManagement.showGallery(interaction, index, state.sortBy, state.filterActive);
+  } catch (error) {
+    console.error('Error jumping to image:', error);
+    const embed = embedUtils.createErrorEmbed('Invalid image number.');
+    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  }
+}
+
+// NEW: Handle bulk retire custom threshold
+async function handleBulkRetireCustom(interaction) {
+  const threshold = parseInt(interaction.fields.getTextInputValue('threshold'));
+  
+  if (isNaN(threshold)) {
+    await interaction.reply({ 
+      content: 'Invalid ELO threshold.', 
+      flags: MessageFlags.Ephemeral 
+    });
+    return;
+  }
+  
+  await imageManagement.executeBulkRetire(interaction, threshold);
+}
+
+// NEW: Handle bulk unretire custom threshold
+async function handleBulkUnretireCustom(interaction) {
+  const threshold = parseInt(interaction.fields.getTextInputValue('threshold'));
+  
+  if (isNaN(threshold)) {
+    await interaction.reply({ 
+      content: 'Invalid ELO threshold.', 
+      flags: MessageFlags.Ephemeral 
+    });
+    return;
+  }
+  
+  await imageManagement.executeBulkUnretire(interaction, threshold);
 }
 
 export default { handleModalSubmit };
