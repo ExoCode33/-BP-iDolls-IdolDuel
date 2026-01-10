@@ -1,12 +1,13 @@
 /**
  * IdolDuel Bot - Main Entry Point
  * UPDATED: Modular interactions, silent imports, aspect ratio filtering
+ * FIXED: Command loader handles both files and folders
  */
 
 import { Client, GatewayIntentBits, Collection, REST, Routes } from 'discord.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { readdirSync } from 'fs';
+import { readdirSync, statSync } from 'fs';
 import database from './database/database.js';
 import redis from './database/redis.js';
 import storage from './services/image/storage.js';
@@ -30,19 +31,32 @@ const client = new Client({
 client.commands = new Collection();
 
 /**
- * Load all commands
+ * Load all commands - handles both files and folders
  */
 async function loadCommands() {
   const commandsPath = join(__dirname, 'commands');
-  const commandFolders = readdirSync(commandsPath);
+  const items = readdirSync(commandsPath);
 
-  for (const folder of commandFolders) {
-    const folderPath = join(commandsPath, folder);
-    const commandFiles = readdirSync(folderPath).filter(file => file.endsWith('.js'));
+  for (const item of items) {
+    const itemPath = join(commandsPath, item);
+    const stats = statSync(itemPath);
+    
+    if (stats.isDirectory()) {
+      // It's a folder - scan for .js files inside
+      const commandFiles = readdirSync(itemPath).filter(file => file.endsWith('.js'));
+      
+      for (const file of commandFiles) {
+        const filePath = join(itemPath, file);
+        const command = (await import(`file://${filePath}`)).default;
 
-    for (const file of commandFiles) {
-      const filePath = join(folderPath, file);
-      const command = (await import(`file://${filePath}`)).default;
+        if ('data' in command && 'execute' in command) {
+          client.commands.set(command.data.name, command);
+          console.log(`✅ Loaded command: ${command.data.name}`);
+        }
+      }
+    } else if (item.endsWith('.js')) {
+      // It's a .js file directly in commands folder
+      const command = (await import(`file://${itemPath}`)).default;
 
       if ('data' in command && 'execute' in command) {
         client.commands.set(command.data.name, command);
