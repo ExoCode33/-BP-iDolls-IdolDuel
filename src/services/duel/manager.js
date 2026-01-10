@@ -1,6 +1,7 @@
 /**
  * Duel Manager - 2 EMBED VERSION
  * Handles array of 2 embeds properly
+ * FIXED: BigInt handling throughout
  */
 
 import database from '../../database/database.js';
@@ -123,9 +124,12 @@ class DuelManager {
 
   async checkGuild(guildId) {
     try {
+      // FIXED: Ensure guildId is string
+      const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+
       const configResult = await database.query(
         'SELECT * FROM guild_config WHERE guild_id = $1',
-        [guildId]
+        [guildIdStr]
       );
 
       if (configResult.rows.length === 0) return;
@@ -136,15 +140,15 @@ class DuelManager {
 
       const activeDuelCheck = await database.query(
         'SELECT * FROM active_duels WHERE guild_id = $1',
-        [guildId]
+        [guildIdStr]
       );
 
       if (activeDuelCheck.rows.length > 0) {
-        console.log(`Guild ${guildId} already has an active duel`);
+        console.log(`Guild ${guildIdStr} already has an active duel`);
         return;
       }
 
-      await this.createNewDuel(guildId, config);
+      await this.createNewDuel(guildIdStr, config);
     } catch (error) {
       console.error(`Error checking guild ${guildId}:`, error);
     }
@@ -242,26 +246,30 @@ class DuelManager {
     try {
       console.log(`⏰ Ending duel for guild ${guildId}...`);
 
-      const activeDuel = await this.getActiveDuel(guildId);
+      // FIXED: Ensure guildId is string
+      const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+
+      const activeDuel = await this.getActiveDuel(guildIdStr);
 
       if (!activeDuel) {
         console.log('No active duel found');
         return;
       }
 
-      await resolver.resolveDuel(guildId, activeDuel.duelId, this.client);
+      // FIXED: Call resolver with correct parameters
+      await resolver.resolveDuel(guildIdStr, activeDuel.duelId, this.client);
 
-      await database.query('DELETE FROM active_duels WHERE guild_id = $1', [guildId]);
-      await redis.clearActiveDuel(guildId);
+      await database.query('DELETE FROM active_duels WHERE guild_id = $1', [guildIdStr]);
+      await redis.clearActiveDuel(guildIdStr);
 
-      if (this.activeTimers.has(guildId)) {
-        clearTimeout(this.activeTimers.get(guildId));
-        this.activeTimers.delete(guildId);
+      if (this.activeTimers.has(guildIdStr)) {
+        clearTimeout(this.activeTimers.get(guildIdStr));
+        this.activeTimers.delete(guildIdStr);
       }
 
       const configResult = await database.query(
         'SELECT * FROM guild_config WHERE guild_id = $1',
-        [guildId]
+        [guildIdStr]
       );
 
       if (configResult.rows.length === 0) return;
@@ -269,10 +277,10 @@ class DuelManager {
       const config = configResult.rows[0];
 
       const nextDuelTimer = setTimeout(() => {
-        this.checkGuild(guildId);
+        this.checkGuild(guildIdStr);
       }, config.duel_interval * 1000);
 
-      this.activeTimers.set(`${guildId}_next`, nextDuelTimer);
+      this.activeTimers.set(`${guildIdStr}_next`, nextDuelTimer);
 
       console.log(`✅ Duel ended, next duel in ${config.duel_interval / 60} minutes`);
     } catch (error) {
@@ -332,36 +340,42 @@ class DuelManager {
   }
 
   async startDuel(guildId) {
+    const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+    
     await database.query(
       'UPDATE guild_config SET duel_active = true, duel_paused = false WHERE guild_id = $1',
-      [guildId]
+      [guildIdStr]
     );
 
-    await this.checkGuild(guildId);
+    await this.checkGuild(guildIdStr);
   }
 
   async stopDuel(guildId) {
+    const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+    
     await database.query(
       'UPDATE guild_config SET duel_active = false, duel_paused = false WHERE guild_id = $1',
-      [guildId]
+      [guildIdStr]
     );
 
-    if (this.activeTimers.has(guildId)) {
-      clearTimeout(this.activeTimers.get(guildId));
-      this.activeTimers.delete(guildId);
+    if (this.activeTimers.has(guildIdStr)) {
+      clearTimeout(this.activeTimers.get(guildIdStr));
+      this.activeTimers.delete(guildIdStr);
     }
 
-    if (this.activeTimers.has(`${guildId}_next`)) {
-      clearTimeout(this.activeTimers.get(`${guildId}_next`));
-      this.activeTimers.delete(`${guildId}_next`);
+    if (this.activeTimers.has(`${guildIdStr}_next`)) {
+      clearTimeout(this.activeTimers.get(`${guildIdStr}_next`));
+      this.activeTimers.delete(`${guildIdStr}_next`);
     }
   }
 
   async skipDuel(guildId) {
-    await this.endDuel(guildId);
+    const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+    
+    await this.endDuel(guildIdStr);
     
     setTimeout(() => {
-      this.checkGuild(guildId);
+      this.checkGuild(guildIdStr);
     }, 2000);
   }
 }
