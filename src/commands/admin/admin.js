@@ -1,6 +1,6 @@
 /**
  * Enhanced Admin Command
- * Manual retirement settings (losses or ELO threshold)
+ * FIXED: Real-time updates, proper state management, all controls working
  */
 
 import { 
@@ -11,7 +11,7 @@ import {
   MessageFlags
 } from 'discord.js';
 import database from '../../database/database.js';
-import embedUtils from '../../utils/embeds.js';
+import embedUtils from '../../utils/embedUtils.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -31,7 +31,7 @@ export default {
   },
 
   async showAdminPanel(interaction, isUpdate = false) {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
 
     // Get config
     const configResult = await database.query(
@@ -45,7 +45,7 @@ export default {
       );
       
       if (isUpdate) {
-        await interaction.editReply({ embeds: [embed], components: [] });
+        await interaction.update({ embeds: [embed], components: [] });
       } else {
         await interaction.editReply({ embeds: [embed] });
       }
@@ -97,14 +97,24 @@ export default {
       retirementInfo = `• Auto-Retire: Below ${config.retire_below_elo} ELO`;
     }
 
+    // Status emoji
+    let statusText = '❌ Stopped';
+    if (config.duel_active) {
+      if (config.duel_paused) {
+        statusText = '⏸️ Paused';
+      } else {
+        statusText = '✅ Active';
+      }
+    }
+
     embed.setDescription(
-      `**Status:** ${config.duel_active ? (config.duel_paused ? '⏸️ Paused' : '✅ Active') : '❌ Stopped'}\n` +
+      `**Status:** ${statusText}\n` +
       `**Schedule:** Every ${scheduleMinutes} min for ${durationMinutes} min\n` +
       `**Season:** ${config.season_number}\n\n` +
       `**📊 Statistics:**\n` +
       `• Images: ${imageStats.active} active, ${imageStats.retired} retired\n` +
       `• Total Duels: ${duelStats.rows[0].total}\n` +
-      `• Current Duel: ${hasActiveDuel ? 'Yes' : 'No'}\n\n` +
+      `• Current Duel: ${hasActiveDuel ? '✅ Yes' : '❌ No'}\n\n` +
       `**⚙️ Settings:**\n` +
       `• Starting ELO: ${config.starting_elo}\n` +
       `• K-Factor: ${config.k_factor}\n` +
@@ -116,43 +126,41 @@ export default {
     const controlRow = new ActionRowBuilder();
 
     if (!config.duel_active) {
+      // System is stopped - show Start button
       controlRow.addComponents(
         new ButtonBuilder()
           .setCustomId('admin_start_duel')
-          .setLabel('Start Duel System')
+          .setLabel('▶️ Start System')
           .setStyle(ButtonStyle.Success)
-          .setEmoji('▶️')
       );
     } else if (config.duel_paused) {
+      // System is paused - show Resume and Stop
       controlRow.addComponents(
         new ButtonBuilder()
           .setCustomId('admin_resume_duel')
-          .setLabel('Resume')
-          .setStyle(ButtonStyle.Success)
-          .setEmoji('▶️'),
+          .setLabel('▶️ Resume')
+          .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
           .setCustomId('admin_stop_duel')
-          .setLabel('Stop')
+          .setLabel('⏹️ Stop')
           .setStyle(ButtonStyle.Danger)
-          .setEmoji('⏹️')
       );
     } else {
+      // System is active - show Pause, Skip, Stop
       controlRow.addComponents(
         new ButtonBuilder()
           .setCustomId('admin_pause_duel')
-          .setLabel('Pause')
-          .setStyle(ButtonStyle.Secondary)
-          .setEmoji('⏸️'),
+          .setLabel('⏸️ Pause')
+          .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId('admin_skip_duel')
-          .setLabel('Skip')
+          .setLabel('⏭️ Skip Duel')
           .setStyle(ButtonStyle.Secondary)
-          .setEmoji('⏭️'),
+          .setDisabled(!hasActiveDuel),
         new ButtonBuilder()
           .setCustomId('admin_stop_duel')
-          .setLabel('Stop')
+          .setLabel('⏹️ Stop')
           .setStyle(ButtonStyle.Danger)
-          .setEmoji('⏹️')
       );
     }
 
@@ -185,13 +193,13 @@ export default {
           .setLabel('🖼️ Browse Images')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId('admin_system_reset')
-          .setLabel('⚠️ System Reset')
-          .setStyle(ButtonStyle.Danger)
+          .setCustomId('admin_refresh_panel')
+          .setLabel('🔄 Refresh')
+          .setStyle(ButtonStyle.Secondary)
       );
 
     if (isUpdate) {
-      await interaction.editReply({ 
+      await interaction.update({ 
         embeds: [embed], 
         components: [controlRow, settingsRow, managementRow]
       });
