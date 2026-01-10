@@ -1,7 +1,6 @@
 /**
  * Enhanced Admin Command
- * FIXED: Real-time updates, proper state management, all controls working
- * Auto-refresh after every action (no refresh button needed)
+ * FIXED: Proper interaction handling for buttons vs modals
  */
 
 import { 
@@ -64,9 +63,7 @@ export default {
       `SELECT 
         COUNT(*) FILTER (WHERE retired = false) as active,
         COUNT(*) FILTER (WHERE retired = true) as retired,
-        COUNT(*) as total,
-        MAX(elo) as max_elo,
-        MIN(elo) FILTER (WHERE retired = false) as min_elo
+        COUNT(*) as total
        FROM images WHERE guild_id = $1`,
       [guildId]
     );
@@ -114,17 +111,15 @@ export default {
 
     embed.setDescription(
       `**Status:** ${statusText}\n` +
-      `**Schedule:** Every ${scheduleMinutes} min for ${durationMinutes} min\n` +
-      `**Season:** ${config.season_number}\n\n` +
+      `**Schedule:** Every ${scheduleMinutes} min for ${durationMinutes} min\n\n` +
       `**📊 Statistics:**\n` +
       `• Images: ${imageStats.active} active, ${imageStats.retired} retired\n` +
       `• Total Duels: ${duelStats.rows[0].total}\n` +
-      `• Current Duel: ${hasActiveDuel ? '✅ Yes' : '❌ No'}\n\n` +
+      `• Current Duel: ${hasActiveDuel ? '✅ Running' : '❌ None'}\n\n` +
       `**⚙️ Settings:**\n` +
       `• Starting ELO: ${config.starting_elo}\n` +
       `• K-Factor: ${config.k_factor}\n` +
-      `${retirementInfo}\n\n` +
-      `Use the buttons below to control the system.`
+      `${retirementInfo}`
     );
 
     // Control buttons (Row 1)
@@ -186,7 +181,7 @@ export default {
           .setStyle(ButtonStyle.Primary)
       );
 
-    // Management buttons (Row 3) - NO REFRESH BUTTON
+    // Management buttons (Row 3)
     const managementRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -201,26 +196,18 @@ export default {
 
     const components = [controlRow, settingsRow, managementRow];
 
+    // FIXED: Proper handling for different interaction types
     if (isUpdate) {
-      // Check if this is a modal or button interaction
       if (interaction.isModalSubmit()) {
-        // Modal submissions must use editReply after deferUpdate
-        await interaction.editReply({ 
-          embeds: [embed], 
-          components: components 
-        });
-      } else {
-        // Button interactions can use update
-        await interaction.update({ 
-          embeds: [embed], 
-          components: components 
-        });
+        // Modals: use editReply after deferUpdate
+        await interaction.editReply({ embeds: [embed], components: components });
+      } else if (interaction.isButton()) {
+        // Buttons: use update (NOT editReply)
+        await interaction.update({ embeds: [embed], components: components });
       }
     } else {
-      await interaction.editReply({ 
-        embeds: [embed], 
-        components: components 
-      });
+      // Initial command: use editReply after deferReply
+      await interaction.editReply({ embeds: [embed], components: components });
     }
   }
 };
