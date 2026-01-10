@@ -1,7 +1,7 @@
 /**
  * Duel Manager - 2 EMBED VERSION
  * Handles array of 2 embeds properly
- * FIXED: BigInt handling throughout
+ * FIXED: BigInt handling throughout + Vote counter updates
  */
 
 import database from '../../database/database.js';
@@ -15,6 +15,7 @@ class DuelManager {
   constructor() {
     this.client = null;
     this.activeTimers = new Map();
+    this.voteUpdateIntervals = new Map();
   }
 
   setClient(client) {
@@ -232,8 +233,67 @@ class DuelManager {
       // Create buttons
       const row = embedUtils.createVoteButtons(pair.image1.id, pair.image2.id);
 
-      // Send with embeds array (already an array, don't wrap it)
+      // Send with embeds array
       const message = await channel.send({ embeds: embeds, components: [row] });
+
+      // Set up vote counter update (every 30 seconds)
+      const updateInterval = setInterval(async () => {
+        try {
+          // Check if duel is still active
+          const activeDuelCheck = await database.query(
+            'SELECT * FROM active_duels WHERE guild_id = $1',
+            [guildId]
+          );
+
+          if (activeDuelCheck.rows.length === 0) {
+            clearInterval(updateInterval);
+            this.voteUpdateIntervals.delete(guildId);
+            return;
+          }
+
+          const duelId = activeDuelCheck.rows[0].duel_id;
+
+          // Get current vote counts
+          const votes = await database.query(
+            `SELECT image_id, COUNT(*) as votes
+             FROM votes
+             WHERE duel_id = $1
+             GROUP BY image_id`,
+            [duelId]
+          );
+
+          let image1Votes = 0;
+          let image2Votes = 0;
+
+          for (const row of votes.rows) {
+            if (row.image_id === pair.image1.id) {
+              image1Votes = parseInt(row.votes);
+            } else if (row.image_id === pair.image2.id) {
+              image2Votes = parseInt(row.votes);
+            }
+          }
+
+          // Update the embeds with vote counts
+          const updatedEmbeds = embedUtils.createDuelEmbed(
+            pair.image1, 
+            pair.image2, 
+            url1, 
+            url2, 
+            endsAt,
+            image1Votes,
+            image2Votes
+          );
+
+          await message.edit({ embeds: updatedEmbeds });
+        } catch (error) {
+          console.error('Error updating vote counts:', error);
+          clearInterval(updateInterval);
+          this.voteUpdateIntervals.delete(guildId);
+        }
+      }, 30000); // Update every 30 seconds
+
+      // Store the interval so we can clear it later
+      this.voteUpdateIntervals.set(guildId, updateInterval);
 
       return message.id;
     } catch (error) {
@@ -254,6 +314,12 @@ class DuelManager {
       if (!activeDuel) {
         console.log('No active duel found');
         return;
+      }
+
+      // Clear vote update interval
+      if (this.voteUpdateIntervals.has(guildIdStr)) {
+        clearInterval(this.voteUpdateIntervals.get(guildIdStr));
+        this.voteUpdateIntervals.delete(guildIdStr);
       }
 
       // FIXED: Call resolver with correct parameters
@@ -366,6 +432,11 @@ class DuelManager {
     if (this.activeTimers.has(`${guildIdStr}_next`)) {
       clearTimeout(this.activeTimers.get(`${guildIdStr}_next`));
       this.activeTimers.delete(`${guildIdStr}_next`);
+    }
+
+    if (this.voteUpdateIntervals.has(guildIdStr)) {
+      clearInterval(this.voteUpdateIntervals.get(guildIdStr));
+      this.voteUpdateIntervals.delete(guildIdStr);
     }
   }
 
