@@ -1,6 +1,7 @@
 /**
  * Complete Interaction Handler
  * Enhanced image browser with filters (ELO/User) and fixed pagination
+ * FIXED: BigInt handling throughout
  */
 
 import database from '../database/database.js';
@@ -183,9 +184,11 @@ async function handleBrowseFilter(interaction) {
 
 /**
  * Show user select menu
+ * FIXED: BigInt handling
  */
 async function showUserSelectMenu(interaction, page = 0) {
-  const guildId = interaction.guild.id;
+  // FIXED: Convert BigInt to string
+  const guildId = interaction.guild.id.toString();
 
   // Get all unique uploaders
   const usersResult = await database.query(
@@ -261,6 +264,7 @@ async function handleBrowseUserSelect(interaction) {
 
 /**
  * Show image browser with filters
+ * FIXED: BigInt handling for guildId and userId
  */
 async function showImageBrowser(interaction, page = 0, sortBy = 'elo', userId = null) {
   const isUpdate = interaction.deferred || interaction.replied;
@@ -270,7 +274,8 @@ async function showImageBrowser(interaction, page = 0, sortBy = 'elo', userId = 
   }
 
   try {
-    const guildId = interaction.guild.id;
+    // FIXED: Convert BigInt to string
+    const guildId = interaction.guild.id.toString();
     const limit = 1; // Show 1 image per page for better UX
     const offset = page * limit;
 
@@ -281,7 +286,8 @@ async function showImageBrowser(interaction, page = 0, sortBy = 'elo', userId = 
 
     if (userId) {
       query += ' AND uploader_id = $2';
-      queryParams.push(userId);
+      // FIXED: Ensure userId is string
+      queryParams.push(typeof userId === 'bigint' ? userId.toString() : String(userId));
       orderBy = 'elo DESC';
     }
 
@@ -311,7 +317,7 @@ async function showImageBrowser(interaction, page = 0, sortBy = 'elo', userId = 
     
     if (userId) {
       countQuery += ' AND uploader_id = $2';
-      countParams.push(userId);
+      countParams.push(typeof userId === 'bigint' ? userId.toString() : String(userId));
     }
 
     const totalResult = await database.query(countQuery, countParams);
@@ -327,10 +333,11 @@ async function showImageBrowser(interaction, page = 0, sortBy = 'elo', userId = 
     const currentImage = imagesResult.rows[0];
     const imageUrl = await storage.getImageUrl(currentImage.s3_key);
 
-    // Get uploader name
+    // Get uploader name - FIXED: Ensure uploader_id is string
     let uploaderName = 'Unknown User';
     try {
-      const member = await interaction.guild.members.fetch(currentImage.uploader_id);
+      const uploaderId = currentImage.uploader_id.toString();
+      const member = await interaction.guild.members.fetch(uploaderId);
       uploaderName = member.user.username;
     } catch (error) {
       uploaderName = `User ${currentImage.uploader_id}`;
@@ -511,7 +518,7 @@ async function handleImageDelete(interaction) {
     const page = parseInt(parts[3]);
     const sortBy = parts[4] || 'elo';
     const userId = parts[5] !== 'null' ? parts[5] : null;
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
 
     const imageResult = await database.query(
       'SELECT * FROM images WHERE guild_id = $1 AND id = $2',
@@ -561,7 +568,7 @@ async function handleImageRetire(interaction) {
     const page = parseInt(parts[3]);
     const sortBy = parts[4] || 'elo';
     const userId = parts[5] !== 'null' ? parts[5] : null;
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
 
     await database.query(
       'UPDATE images SET retired = true, retired_at = NOW() WHERE guild_id = $1 AND id = $2',
@@ -593,7 +600,7 @@ async function handleImageUnretire(interaction) {
     const page = parseInt(parts[3]);
     const sortBy = parts[4] || 'elo';
     const userId = parts[5] !== 'null' ? parts[5] : null;
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
 
     await database.query(
       'UPDATE images SET retired = false, retired_at = NULL WHERE guild_id = $1 AND id = $2',
@@ -612,9 +619,6 @@ async function handleImageUnretire(interaction) {
     autoDeleteEphemeral(interaction);
   }
 }
-
-// ... (Modal handlers and duel controls remain the same - keeping file size manageable)
-// Include all the previous handlers: showScheduleModal, handleScheduleSubmit, etc.
 
 /**
  * Handle modal submissions
@@ -655,7 +659,7 @@ async function handleModal(interaction) {
  * Show retirement settings modal
  */
 async function showRetirementModal(interaction) {
-  const guildId = interaction.guild.id;
+  const guildId = interaction.guild.id.toString();
   
   const config = await database.query(
     'SELECT retire_after_losses, retire_below_elo FROM guild_config WHERE guild_id = $1',
@@ -708,7 +712,7 @@ async function handleRetirementSubmit(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
     const retireAfterLosses = parseInt(interaction.fields.getTextInputValue('retire_after_losses'));
     const retireBelowElo = parseInt(interaction.fields.getTextInputValue('retire_below_elo'));
 
@@ -761,7 +765,7 @@ async function handleRetirementSubmit(interaction) {
  * Show schedule edit modal
  */
 async function showScheduleModal(interaction) {
-  const guildId = interaction.guild.id;
+  const guildId = interaction.guild.id.toString();
   
   const config = await database.query(
     'SELECT duel_interval, duel_duration FROM guild_config WHERE guild_id = $1',
@@ -803,7 +807,7 @@ async function showScheduleModal(interaction) {
  * Show ELO settings modal
  */
 async function showEloModal(interaction) {
-  const guildId = interaction.guild.id;
+  const guildId = interaction.guild.id.toString();
   
   const config = await database.query(
     'SELECT starting_elo, k_factor FROM guild_config WHERE guild_id = $1',
@@ -876,7 +880,7 @@ async function handleScheduleSubmit(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
     const intervalMinutes = parseInt(interaction.fields.getTextInputValue('duel_interval'));
     const durationMinutes = parseInt(interaction.fields.getTextInputValue('duel_duration'));
 
@@ -923,7 +927,7 @@ async function handleEloSubmit(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
     const startingElo = parseInt(interaction.fields.getTextInputValue('starting_elo'));
     const kFactor = parseInt(interaction.fields.getTextInputValue('k_factor'));
 
@@ -967,7 +971,7 @@ async function handleImportSubmit(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
     let channelInput = interaction.fields.getTextInputValue('channel_id');
     const messageLimit = parseInt(interaction.fields.getTextInputValue('message_limit'));
 
@@ -1029,13 +1033,18 @@ async function handleImportSubmit(interaction) {
   }
 }
 
+/**
+ * Handle vote
+ * FIXED: BigInt handling
+ */
 async function handleVote(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const imageId = parseInt(interaction.customId.split('_')[1]);
-    const guildId = interaction.guild.id;
-    const userId = interaction.user.id;
+    // FIXED: Convert BigInt to string
+    const guildId = interaction.guild.id.toString();
+    const userId = interaction.user.id.toString();
 
     const activeDuel = await duelManager.getActiveDuel(guildId);
 
@@ -1099,7 +1108,7 @@ async function handleStartDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
     await duelManager.startDuel(guildId);
 
     const embed = embedUtils.createSuccessEmbed('Duel system started!');
@@ -1117,7 +1126,7 @@ async function handleStopDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
     await duelManager.stopDuel(guildId);
 
     const embed = embedUtils.createSuccessEmbed('Duel system stopped.');
@@ -1135,7 +1144,7 @@ async function handleSkipDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
     await duelManager.skipDuel(guildId);
 
     const embed = embedUtils.createSuccessEmbed('Duel skipped!');
@@ -1153,7 +1162,7 @@ async function handlePauseDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
 
     await database.query(
       'UPDATE guild_config SET duel_paused = true WHERE guild_id = $1',
@@ -1175,7 +1184,7 @@ async function handleResumeDuel(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const guildId = interaction.guild.id;
+    const guildId = interaction.guild.id.toString();
 
     await database.query(
       'UPDATE guild_config SET duel_paused = false WHERE guild_id = $1',
