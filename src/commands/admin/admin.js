@@ -11,7 +11,7 @@ import {
   MessageFlags
 } from 'discord.js';
 import database from '../../database/database.js';
-import embedUtils from '../../utils/embedUtils.js';
+import embedUtils from '../../utils/embeds.js';
 
 export default {
   data: new SlashCommandBuilder()
