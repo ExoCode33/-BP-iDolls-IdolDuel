@@ -1,144 +1,118 @@
 /**
- * Image Importer Service
- * Handles automatic image importing from Discord messages
+ * Image Importer
+ * UPDATED: Aspect ratio filter (16:9 landscape only) + Silent import
  */
 
+import axios from 'axios';
+import sharp from 'sharp';
 import database from '../../database/database.js';
 import storage from './storage.js';
-import https from 'https';
-import http from 'http';
 
 class ImageImporter {
   /**
-   * Import image from Discord message attachment
-   * @param {string} guildId - Guild ID
-   * @param {string} userId - User ID who posted
-   * @param {string} attachmentUrl - Discord CDN URL
-   * @returns {Promise<Object>} Image record or null
+   * Check if image has acceptable aspect ratio (16:9 landscape ±10%)
    */
-  async importFromMessage(guildId, userId, attachmentUrl) {
+  async checkAspectRatio(buffer) {
     try {
-      // Download image from Discord CDN
-      const imageBuffer = await this.downloadImage(attachmentUrl);
+      const metadata = await sharp(buffer).metadata();
+      const width = metadata.width;
+      const height = metadata.height;
+      
+      // Calculate aspect ratio
+      const aspectRatio = width / height;
+      
+      // Target: 16:9 = 1.778
+      // Allow ±10% tolerance: 1.6 to 1.96
+      const minRatio = 1.6;
+      const maxRatio = 1.96;
+      
+      const isAcceptable = aspectRatio >= minRatio && aspectRatio <= maxRatio;
+      
+      console.log(`📐 Image ${width}x${height} = ${aspectRatio.toFixed(2)} ratio ${isAcceptable ? '✅' : '❌'}`);
+      
+      return isAcceptable;
+    } catch (error) {
+      console.error('Error checking aspect ratio:', error);
+      return false;
+    }
+  }
 
-      if (!imageBuffer) {
-        console.log('⚠️ Failed to download image');
+  /**
+   * Import a single image (NO REACTIONS)
+   */
+  async importSingle(guildId, uploaderId, attachment) {
+    try {
+      const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+      const uploaderIdStr = typeof uploaderId === 'bigint' ? uploaderId.toString() : String(uploaderId);
+
+      if (!attachment.contentType?.startsWith('image/')) {
+        console.log(`Skipping non-image: ${attachment.name}`);
         return null;
       }
 
-      // Validate image
-      if (!storage.isValidImage(imageBuffer)) {
-        console.log('⚠️ Invalid image format');
+      // Download image
+      const response = await axios.get(attachment.url, {
+        responseType: 'arraybuffer',
+        timeout: 10000
+      });
+
+      const buffer = Buffer.from(response.data);
+
+      // ASPECT RATIO CHECK
+      const hasCorrectRatio = await this.checkAspectRatio(buffer);
+      if (!hasCorrectRatio) {
+        console.log(`❌ Skipped ${attachment.name}: Wrong aspect ratio (need ~16:9 landscape)`);
         return null;
       }
 
-      // Check size (max 10MB)
-      if (imageBuffer.length > 10 * 1024 * 1024) {
-        console.log('⚠️ Image too large (>10MB)');
-        return null;
-      }
-
-      // Generate S3 key
-      const s3Key = storage.generateKey(guildId, imageBuffer);
-
-      // Check if already exists (duplicate detection)
-      const existingImage = await database.query(
-        'SELECT id FROM images WHERE guild_id = $1 AND s3_key = $2',
-        [guildId, s3Key]
-      );
-
-      if (existingImage.rows.length > 0) {
-        console.log('⚠️ Duplicate image detected');
-        return null;
-      }
+      // Process image
+      const processedBuffer = await sharp(buffer)
+        .resize(1920, 1080, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 90 })
+        .toBuffer();
 
       // Upload to S3
-      await storage.uploadImage(imageBuffer, s3Key);
+      const s3Key = await storage.uploadImage(guildIdStr, processedBuffer);
 
-      // Get starting ELO from config
-      const configResult = await database.query(
+      // Get starting ELO
+      const config = await database.query(
         'SELECT starting_elo FROM guild_config WHERE guild_id = $1',
-        [guildId]
+        [guildIdStr]
       );
 
-      const startingElo = configResult.rows[0]?.starting_elo || 1000;
+      const startingElo = config.rows[0]?.starting_elo || 1000;
 
       // Insert into database
       const result = await database.query(
-        `INSERT INTO images (guild_id, s3_key, elo, uploader_id, imported_at)
+        `INSERT INTO images (guild_id, uploader_id, s3_key, elo, imported_at)
          VALUES ($1, $2, $3, $4, NOW())
-         RETURNING *`,
-        [guildId, s3Key, startingElo, userId]
+         RETURNING id`,
+        [guildIdStr, uploaderIdStr, s3Key, startingElo]
       );
 
-      const image = result.rows[0];
-      console.log(`✅ Image imported: ID ${image.id} (ELO: ${startingElo})`);
+      console.log(`✅ Imported image #${result.rows[0].id} for guild ${guildIdStr}`);
+      return result.rows[0].id;
 
-      return image;
     } catch (error) {
-      console.error('Error importing image:', error);
+      console.error(`Error importing image:`, error);
       return null;
     }
   }
 
   /**
-   * Download image from URL
-   * @param {string} url - Image URL
-   * @returns {Promise<Buffer>} Image buffer
+   * Import multiple images (NO REACTIONS)
    */
-  async downloadImage(url) {
-    return new Promise((resolve, reject) => {
-      const protocol = url.startsWith('https') ? https : http;
-      
-      protocol.get(url, (response) => {
-        if (response.statusCode !== 200) {
-          reject(new Error(`HTTP ${response.statusCode}`));
-          return;
-        }
-
-        const chunks = [];
-        response.on('data', (chunk) => chunks.push(chunk));
-        response.on('end', () => resolve(Buffer.concat(chunks)));
-        response.on('error', reject);
-      }).on('error', reject);
-    });
-  }
-
-  /**
-   * Validate Discord attachment
-   * @param {Object} attachment - Discord attachment object
-   * @returns {boolean} True if valid image attachment
-   */
-  isValidAttachment(attachment) {
-    if (!attachment.contentType) return false;
-    
-    const validTypes = ['image/png', 'image/jpeg', 'image/jpg'];
-    return validTypes.includes(attachment.contentType.toLowerCase());
-  }
-
-  /**
-   * Import multiple images from a message
-   * @param {string} guildId - Guild ID
-   * @param {string} userId - User ID
-   * @param {Array} attachments - Array of Discord attachments
-   * @returns {Promise<Array>} Array of imported image records
-   */
-  async importMultiple(guildId, userId, attachments) {
-    const imported = [];
+  async importMultiple(guildId, uploaderId, attachments) {
+    const results = [];
 
     for (const attachment of attachments) {
-      if (!this.isValidAttachment(attachment)) {
-        continue;
-      }
-
-      const image = await this.importFromMessage(guildId, userId, attachment.url);
-      
-      if (image) {
-        imported.push(image);
+      const imageId = await this.importSingle(guildId, uploaderId, attachment);
+      if (imageId) {
+        results.push(imageId);
       }
     }
 
-    return imported;
+    return results;
   }
 }
 
