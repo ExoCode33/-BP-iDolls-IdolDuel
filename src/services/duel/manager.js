@@ -230,7 +230,6 @@ class DuelManager {
 
       const message = await channel.send({ embeds: embeds, components: [row] });
 
-      // Set up vote counter update (every 30 seconds)
       const updateInterval = setInterval(async () => {
         try {
           const activeDuelCheck = await database.query(
@@ -305,16 +304,13 @@ class DuelManager {
         return;
       }
 
-      // Clear vote update interval
       if (this.voteUpdateIntervals.has(guildIdStr)) {
         clearInterval(this.voteUpdateIntervals.get(guildIdStr));
         this.voteUpdateIntervals.delete(guildIdStr);
       }
 
-      // Resolve duel with results
       await resolver.resolveDuel(guildIdStr, activeDuel.duelId, this.client);
 
-      // Clean up active duel
       await database.query('DELETE FROM active_duels WHERE guild_id = $1', [guildIdStr]);
       await redis.clearActiveDuel(guildIdStr);
 
@@ -410,13 +406,6 @@ class DuelManager {
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // CONTROL ACTIONS - FLAWLESS LOGIC
-  // ═══════════════════════════════════════════════════════════
-
-  /**
-   * START - Activates the system and starts a new duel immediately
-   */
   async startDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
     
@@ -425,7 +414,6 @@ class DuelManager {
       [guildIdStr]
     );
 
-    // Clear any pending "next duel" timers
     if (this.activeTimers.has(`${guildIdStr}_next`)) {
       clearTimeout(this.activeTimers.get(`${guildIdStr}_next`));
       this.activeTimers.delete(`${guildIdStr}_next`);
@@ -435,25 +423,19 @@ class DuelManager {
     console.log(`▶️ System started for guild ${guildIdStr}`);
   }
 
-  /**
-   * STOP - Ends current duel WITH RESULTS, deactivates system, no next duel
-   */
   async stopDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
     
-    // End current duel if exists (posts results)
     const activeDuel = await this.getActiveDuel(guildIdStr);
     if (activeDuel) {
       await this.endDuel(guildIdStr);
     }
 
-    // Deactivate system
     await database.query(
       'UPDATE guild_config SET duel_active = false, duel_paused = false WHERE guild_id = $1',
       [guildIdStr]
     );
 
-    // Clear all timers
     if (this.activeTimers.has(guildIdStr)) {
       clearTimeout(this.activeTimers.get(guildIdStr));
       this.activeTimers.delete(guildIdStr);
@@ -472,16 +454,11 @@ class DuelManager {
     console.log(`⏹️ System stopped for guild ${guildIdStr}`);
   }
 
-  /**
-   * SKIP - Ends current duel WITH RESULTS, starts next duel after 3s
-   */
   async skipDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
     
-    // End current duel (posts results)
     await this.endDuel(guildIdStr);
     
-    // Start next duel after brief delay
     setTimeout(() => {
       this.checkGuild(guildIdStr);
     }, 3000);
@@ -489,9 +466,6 @@ class DuelManager {
     console.log(`⏭️ Duel skipped for guild ${guildIdStr}`);
   }
 
-  /**
-   * PAUSE - Stops duel timer, keeps duel active, can resume
-   */
   async pauseDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
 
@@ -500,19 +474,14 @@ class DuelManager {
       [guildIdStr]
     );
 
-    // Clear the duel end timer (duel stays active but won't end)
     if (this.activeTimers.has(guildIdStr)) {
       clearTimeout(this.activeTimers.get(guildIdStr));
       this.activeTimers.delete(guildIdStr);
     }
 
-    // Keep vote updates running
     console.log(`⏸️ Duel paused for guild ${guildIdStr}`);
   }
 
-  /**
-   * RESUME - Resumes paused duel or starts new one if none active
-   */
   async resumeDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
 
@@ -524,7 +493,6 @@ class DuelManager {
     const activeDuel = await this.getActiveDuel(guildIdStr);
 
     if (activeDuel) {
-      // Resume existing duel - restart timer
       const now = new Date();
       const endsAt = new Date(activeDuel.endsAt);
       const remainingTime = endsAt - now;
@@ -537,12 +505,10 @@ class DuelManager {
         this.activeTimers.set(guildIdStr, timer);
         console.log(`▶️ Duel resumed with ${Math.round(remainingTime / 1000)}s remaining`);
       } else {
-        // Duel expired during pause, end it
         await this.endDuel(guildIdStr);
         await this.scheduleNextDuel(guildIdStr);
       }
     } else {
-      // No active duel, start a new one
       await this.checkGuild(guildIdStr);
       console.log(`▶️ System resumed, starting new duel`);
     }
