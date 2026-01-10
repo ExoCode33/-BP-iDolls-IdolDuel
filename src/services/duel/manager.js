@@ -1,7 +1,7 @@
 /**
  * Duel Manager - 2 EMBED VERSION
  * Handles array of 2 embeds properly
- * FIXED: BigInt handling throughout + Vote counter updates
+ * FIXED: BigInt handling throughout + Vote counter updates + Skip resolves duel
  */
 
 import database from '../../database/database.js';
@@ -125,7 +125,6 @@ class DuelManager {
 
   async checkGuild(guildId) {
     try {
-      // FIXED: Ensure guildId is string
       const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
 
       const configResult = await database.query(
@@ -227,19 +226,14 @@ class DuelManager {
       const url1 = await storage.getImageUrl(pair.image1.s3_key);
       const url2 = await storage.getImageUrl(pair.image2.s3_key);
 
-      // Create embeds (returns array of 2 embeds)
       const embeds = embedUtils.createDuelEmbed(pair.image1, pair.image2, url1, url2, endsAt);
-
-      // Create buttons
       const row = embedUtils.createVoteButtons(pair.image1.id, pair.image2.id);
 
-      // Send with embeds array
       const message = await channel.send({ embeds: embeds, components: [row] });
 
       // Set up vote counter update (every 30 seconds)
       const updateInterval = setInterval(async () => {
         try {
-          // Check if duel is still active
           const activeDuelCheck = await database.query(
             'SELECT * FROM active_duels WHERE guild_id = $1',
             [guildId]
@@ -253,7 +247,6 @@ class DuelManager {
 
           const duelId = activeDuelCheck.rows[0].duel_id;
 
-          // Get current vote counts
           const votes = await database.query(
             `SELECT image_id, COUNT(*) as votes
              FROM votes
@@ -273,7 +266,6 @@ class DuelManager {
             }
           }
 
-          // Update the embeds with vote counts
           const updatedEmbeds = embedUtils.createDuelEmbed(
             pair.image1, 
             pair.image2, 
@@ -290,9 +282,8 @@ class DuelManager {
           clearInterval(updateInterval);
           this.voteUpdateIntervals.delete(guildId);
         }
-      }, 30000); // Update every 30 seconds
+      }, 30000);
 
-      // Store the interval so we can clear it later
       this.voteUpdateIntervals.set(guildId, updateInterval);
 
       return message.id;
@@ -306,7 +297,6 @@ class DuelManager {
     try {
       console.log(`⏰ Ending duel for guild ${guildId}...`);
 
-      // FIXED: Ensure guildId is string
       const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
 
       const activeDuel = await this.getActiveDuel(guildIdStr);
@@ -443,11 +433,13 @@ class DuelManager {
   async skipDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
     
+    // FIXED: End the current duel with results (resolves based on votes)
     await this.endDuel(guildIdStr);
     
+    // Wait a bit before starting the next duel (so users can see results)
     setTimeout(() => {
       this.checkGuild(guildIdStr);
-    }, 2000);
+    }, 3000); // 3 seconds delay
   }
 }
 
