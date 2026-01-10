@@ -1,85 +1,124 @@
 /**
  * Duel Resolver Service
  * Resolves duels by counting votes and updating ELO
+ * FIXED: BigInt handling for image IDs
  */
 
 import database from '../../database/database.js';
 import eloCalculator from '../elo/calculator.js';
 import retirement from '../image/retirement.js';
-import cache from '../cache/manager.js';
 
 class DuelResolver {
   /**
-   * Resolve a duel
+   * Resolve a duel (called by manager.js)
    * @param {string} guildId - Guild ID
    * @param {number} duelId - Duel ID
-   * @param {number} image1Id - Image 1 ID
-   * @param {number} image2Id - Image 2 ID
-   * @param {number} kFactor - K-factor for ELO
-   * @param {number} duelInterval - Duel interval for retirement check
-   * @returns {Promise<Object>} Results object
+   * @param {Client} client - Discord client
    */
-  async resolveDuel(guildId, duelId, image1Id, image2Id, kFactor, duelInterval) {
-    // Count votes
-    const voteCounts = await this.countVotes(duelId);
+  async resolveDuel(guildId, duelId, client) {
+    try {
+      // Ensure guildId is string
+      const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
 
-    // No votes = skip
-    if (voteCounts.total === 0) {
-      await this.markDuelSkipped(duelId);
+      // Get duel info
+      const duelInfo = await database.query(
+        'SELECT * FROM duels WHERE id = $1',
+        [duelId]
+      );
+
+      if (duelInfo.rows.length === 0) {
+        console.error('Duel not found:', duelId);
+        return { skipped: true };
+      }
+
+      const duel = duelInfo.rows[0];
+      const image1Id = duel.image1_id;
+      const image2Id = duel.image2_id;
+
+      // Get guild config for K-factor
+      const configResult = await database.query(
+        'SELECT k_factor, retire_after_losses, retire_below_elo FROM guild_config WHERE guild_id = $1',
+        [guildIdStr]
+      );
+
+      const config = configResult.rows[0];
+      const kFactor = config?.k_factor || 32;
+
+      // Count votes
+      const voteCounts = await this.countVotes(duelId, image1Id, image2Id);
+
+      // No votes = skip
+      if (voteCounts.total === 0) {
+        await this.markDuelSkipped(duelId);
+        console.log(`⏭️ Duel ${duelId} skipped (no votes)`);
+        return {
+          skipped: true,
+          winner: null,
+          loser: null
+        };
+      }
+
+      // Determine winner
+      const winnerId = voteCounts.image1 > voteCounts.image2 ? image1Id : image2Id;
+      const loserId = winnerId === image1Id ? image2Id : image1Id;
+      const winnerVotes = winnerId === image1Id ? voteCounts.image1 : voteCounts.image2;
+      const loserVotes = winnerId === image1Id ? voteCounts.image2 : voteCounts.image1;
+
+      // Get image records
+      const images = await this.getImages(guildIdStr, [winnerId, loserId]);
+      const winner = images.find(img => img.id === winnerId);
+      const loser = images.find(img => img.id === loserId);
+
+      if (!winner || !loser) {
+        console.error('Winner or loser not found in database');
+        await this.markDuelSkipped(duelId);
+        return { skipped: true };
+      }
+
+      // Calculate ELO changes
+      const eloChanges = eloCalculator.calculateDuelResults(
+        winner.elo,
+        loser.elo,
+        kFactor
+      );
+
+      // Update database
+      await this.updateDuelRecord(duelId, winnerId, voteCounts.image1, voteCounts.image2);
+      await this.updateImageStats(winnerId, loserId, eloChanges);
+
+      // Check for retirement
+      const retired = await retirement.checkAndRetire(guildIdStr, loserId);
+
+      // Get updated records
+      const updatedImages = await this.getImages(guildIdStr, [winnerId, loserId]);
+      const updatedWinner = updatedImages.find(img => img.id === winnerId);
+      const updatedLoser = updatedImages.find(img => img.id === loserId);
+
+      console.log(`✅ Duel ${duelId} resolved: Winner #${winnerId} (${eloChanges.winnerChange >= 0 ? '+' : ''}${eloChanges.winnerChange} ELO)`);
+
       return {
-        skipped: true,
-        winner: null,
-        loser: null
+        skipped: false,
+        winner: updatedWinner,
+        loser: updatedLoser,
+        winnerVotes,
+        loserVotes,
+        eloChanges,
+        retired
       };
+    } catch (error) {
+      console.error('Error resolving duel:', error);
+      throw error;
     }
-
-    // Determine winner
-    const winnerId = voteCounts.image1 > voteCounts.image2 ? image1Id : image2Id;
-    const loserId = winnerId === image1Id ? image2Id : image1Id;
-    const winnerVotes = winnerId === image1Id ? voteCounts.image1 : voteCounts.image2;
-    const loserVotes = winnerId === image1Id ? voteCounts.image2 : voteCounts.image1;
-
-    // Get image records
-    const images = await this.getImages(guildId, [winnerId, loserId]);
-    const winner = images.find(img => img.id === winnerId);
-    const loser = images.find(img => img.id === loserId);
-
-    // Calculate ELO changes
-    const eloChanges = eloCalculator.calculateDuelResults(
-      winner.elo,
-      loser.elo,
-      kFactor
-    );
-
-    // Update database
-    await this.updateDuelRecord(duelId, winnerId);
-    await this.updateImageStats(winnerId, loserId, eloChanges);
-
-    // Check for retirement
-    const retired = await retirement.checkAndRetire(guildId, loserId, duelInterval);
-
-    // Invalidate caches
-    await cache.invalidateLeaderboard(guildId);
-
-    console.log(`✅ Duel resolved: Winner #${winnerId} (${eloChanges.winnerChange >= 0 ? '+' : ''}${eloChanges.winnerChange} ELO)`);
-
-    return {
-      skipped: false,
-      winner,
-      loser,
-      winnerVotes,
-      loserVotes,
-      eloChanges,
-      retired
-    };
   }
 
   /**
    * Count votes for a duel
    * @param {number} duelId - Duel ID
+   * @param {number} image1Id - Image 1 ID
+   * @param {number} image2Id - Image 2 ID
    * @returns {Promise<Object>} {image1, image2, total}
    */
-  async countVotes(duelId) {
+  async countVotes(duelId, image1Id, image2Id) {
     const result = await database.query(
       `SELECT image_id, COUNT(*) as votes
        FROM votes
@@ -95,22 +134,16 @@ class DuelResolver {
     };
 
     for (const row of result.rows) {
-      counts[row.image_id] = parseInt(row.votes);
-      counts.total += parseInt(row.votes);
-    }
-
-    // Determine which is image1 and image2
-    const duelInfo = await database.query(
-      'SELECT image1_id, image2_id FROM duels WHERE id = $1',
-      [duelId]
-    );
-
-    if (duelInfo.rows.length > 0) {
-      const { image1_id, image2_id } = duelInfo.rows[0];
-      counts.image1 = counts[image1_id] || 0;
-      counts.image2 = counts[image2_id] || 0;
-      delete counts[image1_id];
-      delete counts[image2_id];
+      const imageId = parseInt(row.image_id);
+      const voteCount = parseInt(row.votes);
+      
+      if (imageId === image1Id) {
+        counts.image1 = voteCount;
+      } else if (imageId === image2Id) {
+        counts.image2 = voteCount;
+      }
+      
+      counts.total += voteCount;
     }
 
     return counts;
@@ -118,28 +151,44 @@ class DuelResolver {
 
   /**
    * Get multiple images by ID
+   * FIXED: Ensure proper type handling for BigInt
    * @param {string} guildId - Guild ID
    * @param {Array} imageIds - Array of image IDs
    * @returns {Promise<Array>} Array of image records
    */
   async getImages(guildId, imageIds) {
+    // Ensure guildId is string
+    const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+    
+    // Ensure imageIds are integers (not BigInts)
+    const imageIdsArray = imageIds.map(id => {
+      if (typeof id === 'bigint') {
+        return parseInt(id.toString());
+      }
+      return parseInt(id);
+    });
+    
     const result = await database.query(
       'SELECT * FROM images WHERE guild_id = $1 AND id = ANY($2)',
-      [guildId, imageIds]
+      [guildIdStr, imageIdsArray]
     );
 
     return result.rows;
   }
 
   /**
-   * Update duel record with winner
+   * Update duel record with winner and vote counts
    * @param {number} duelId - Duel ID
    * @param {number} winnerId - Winner image ID
+   * @param {number} image1Votes - Image 1 votes
+   * @param {number} image2Votes - Image 2 votes
    */
-  async updateDuelRecord(duelId, winnerId) {
+  async updateDuelRecord(duelId, winnerId, image1Votes, image2Votes) {
     await database.query(
-      'UPDATE duels SET winner_id = $1, ended_at = NOW() WHERE id = $2',
-      [winnerId, duelId]
+      `UPDATE duels 
+       SET winner_id = $1, image1_votes = $2, image2_votes = $3, ended_at = NOW() 
+       WHERE id = $4`,
+      [winnerId, image1Votes, image2Votes, duelId]
     );
   }
 
