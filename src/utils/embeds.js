@@ -1,6 +1,7 @@
 /**
  * Embed Utilities - 2 EMBED VERSION (GUARANTEED TO WORK)
  * Returns proper EmbedBuilder objects
+ * FIXED: Added vote counts to duel embeds
  */
 
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
@@ -31,8 +32,9 @@ class EmbedUtils {
 
   /**
    * Create duel embeds - Returns array of 2 EmbedBuilder objects
+   * FIXED: Added vote counts
    */
-  createDuelEmbed(image1, image2, url1, url2, endsAt) {
+  createDuelEmbed(image1, image2, url1, url2, endsAt, votes1 = 0, votes2 = 0) {
     // Validate
     if (!image1 || !image2 || !url1 || !url2 || !endsAt) {
       throw new Error('Invalid duel embed parameters');
@@ -43,7 +45,7 @@ class EmbedUtils {
     embed1.setColor(0x4A90E2); // Blue
     embed1.setTitle('⚔️ Image Duel - Vote for Your Favorite!');
     embed1.setDescription(
-      `**👈 Image 1**\n` +
+      `**👈 Image 1** ${votes1 > 0 ? `(${votes1} vote${votes1 !== 1 ? 's' : ''})` : ''}\n` +
       `ELO: ${image1.elo || 1000} ${calculator.getRankEmoji(image1.elo || 1000)}\n` +
       `Record: ${image1.wins || 0}W - ${image1.losses || 0}L\n\n` +
       `Duel ends <t:${Math.floor(endsAt.getTime() / 1000)}:R>`
@@ -54,7 +56,7 @@ class EmbedUtils {
     const embed2 = new EmbedBuilder();
     embed2.setColor(0xE24A90); // Pink
     embed2.setDescription(
-      `**👉 Image 2**\n` +
+      `**👉 Image 2** ${votes2 > 0 ? `(${votes2} vote${votes2 !== 1 ? 's' : ''})` : ''}\n` +
       `ELO: ${image2.elo || 1000} ${calculator.getRankEmoji(image2.elo || 1000)}\n` +
       `Record: ${image2.wins || 0}W - ${image2.losses || 0}L`
     );
