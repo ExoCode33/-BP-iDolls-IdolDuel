@@ -1,165 +1,138 @@
 /**
- * S3 Storage Service
- * Handles all S3 operations for image storage
- * Uses Railway S3-compatible storage
+ * S3 Storage Manager
+ * Handles image upload/download/delete with URL caching
  */
 
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
-import redis from '../../database/redis.js';
 
-class StorageService {
+class StorageManager {
   constructor() {
-    this.s3Client = new S3Client({
-      endpoint: process.env.S3_ENDPOINT,
-      region: process.env.S3_REGION || 'us-east-1',
-      credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY_ID,
-        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
-      },
-      forcePathStyle: true,
-    });
-
+    this.s3Client = null;
     this.bucketName = process.env.S3_BUCKET_NAME;
-    this.urlCacheDuration = 3600; // 1 hour cache for signed URLs
+    this.urlCache = new Map();
+    this.cacheExpiry = 6 * 60 * 60 * 1000; // 6 hours in milliseconds
   }
 
   /**
-   * Generate S3 key for an image
-   * @param {string} guildId - Guild ID
-   * @param {Buffer} imageBuffer - Image data
-   * @returns {string} S3 key (path)
+   * Initialize S3 connection
    */
-  generateKey(guildId, imageBuffer) {
-    const hash = crypto.createHash('sha256').update(imageBuffer).digest('hex');
-    const extension = this.getImageExtension(imageBuffer);
-    return `${guildId}/${hash}.${extension}`;
-  }
-
-  /**
-   * Detect image extension from buffer
-   * @param {Buffer} buffer - Image buffer
-   * @returns {string} Extension (png or jpg)
-   */
-  getImageExtension(buffer) {
-    // Check magic numbers
-    if (buffer[0] === 0x89 && buffer[1] === 0x50) return 'png';
-    if (buffer[0] === 0xFF && buffer[1] === 0xD8) return 'jpg';
-    return 'png'; // Default to PNG
-  }
-
-  /**
-   * Upload image to S3
-   * @param {Buffer} imageBuffer - Image data
-   * @param {string} s3Key - S3 key (path)
-   * @returns {Promise<string>} S3 key
-   */
-  async uploadImage(imageBuffer, s3Key) {
-    const contentType = s3Key.endsWith('.png') ? 'image/png' : 'image/jpeg';
-
-    const command = new PutObjectCommand({
-      Bucket: this.bucketName,
-      Key: s3Key,
-      Body: imageBuffer,
-      ContentType: contentType,
-    });
-
-    await this.s3Client.send(command);
-    console.log(`✅ Image uploaded to S3: ${s3Key}`);
-    
-    return s3Key;
-  }
-
-  /**
-   * Delete image from S3
-   * @param {string} s3Key - S3 key (path)
-   */
-  async deleteImage(s3Key) {
-    const command = new DeleteObjectCommand({
-      Bucket: this.bucketName,
-      Key: s3Key,
-    });
-
-    await this.s3Client.send(command);
-    
-    // Invalidate cache
-    await redis.del(`url:${s3Key}`);
-    
-    console.log(`✅ Image deleted from S3: ${s3Key}`);
-  }
-
-  /**
-   * Get signed URL for an image (with caching)
-   * @param {string} s3Key - S3 key (path)
-   * @returns {Promise<string>} Signed URL
-   */
-  async getImageUrl(s3Key) {
-    // Try cache first
-    const cacheKey = `url:${s3Key}`;
-    const cachedUrl = await redis.get(cacheKey);
-    
-    if (cachedUrl) {
-      return cachedUrl;
-    }
-
-    // Generate new signed URL
-    const command = new GetObjectCommand({
-      Bucket: this.bucketName,
-      Key: s3Key,
-    });
-
-    const url = await getSignedUrl(this.s3Client, command, {
-      expiresIn: this.urlCacheDuration,
-    });
-
-    // Cache it (expires slightly before the URL expires)
-    await redis.set(cacheKey, url, this.urlCacheDuration - 60);
-
-    return url;
-  }
-
-  /**
-   * Test S3 connection
-   */
-  async testConnection() {
+  async initialize() {
     try {
-      console.log('🔍 Testing S3 connection...');
-      console.log('   Endpoint:', process.env.S3_ENDPOINT);
-      console.log('   Bucket:', this.bucketName);
-      console.log('   Region:', process.env.S3_REGION || 'us-east-1');
-
-      // Try to generate a signed URL for a test object
-      const testKey = 'test/connection.txt';
-      const command = new GetObjectCommand({
-        Bucket: this.bucketName,
-        Key: testKey,
+      this.s3Client = new S3Client({
+        region: process.env.S3_REGION,
+        endpoint: process.env.S3_ENDPOINT,
+        credentials: {
+          accessKeyId: process.env.S3_ACCESS_KEY,
+          secretAccessKey: process.env.S3_SECRET_KEY
+        }
       });
 
-      await getSignedUrl(this.s3Client, command, { expiresIn: 60 });
+      // Test connection
+      console.log('🔍 Testing S3 connection...');
+      console.log('   Endpoint:', process.env.S3_ENDPOINT);
+      console.log('   Bucket:', process.env.S3_BUCKET_NAME);
+      console.log('   Region:', process.env.S3_REGION);
+
+      // No need to test with a HEAD request - S3 client is lazy-loaded
+      console.log('✅ S3 client initialized');
       
-      console.log('✅ S3 connection successful');
-      console.log('   ✅ URL caching enabled for faster loading');
     } catch (error) {
-      console.error('❌ S3 connection failed:', error.message);
+      console.error('Failed to initialize S3:', error);
       throw error;
     }
   }
 
   /**
-   * Validate image buffer
-   * @param {Buffer} buffer - Image buffer
-   * @returns {boolean} True if valid
+   * Upload an image to S3
    */
-  isValidImage(buffer) {
-    if (!buffer || buffer.length === 0) return false;
+  async uploadImage(guildId, imageBuffer) {
+    try {
+      const fileHash = crypto.createHash('md5').update(imageBuffer).digest('hex');
+      const s3Key = `${guildId}/${fileHash}.jpg`;
 
-    // Check for PNG or JPEG magic numbers
-    const isPng = buffer[0] === 0x89 && buffer[1] === 0x50;
-    const isJpeg = buffer[0] === 0xFF && buffer[1] === 0xD8;
+      const command = new PutObjectCommand({
+        Bucket: this.bucketName,
+        Key: s3Key,
+        Body: imageBuffer,
+        ContentType: 'image/jpeg'
+      });
 
-    return isPng || isJpeg;
+      await this.s3Client.send(command);
+
+      return s3Key;
+    } catch (error) {
+      console.error('Error uploading to S3:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a signed URL for an image (with caching)
+   */
+  async getImageUrl(s3Key) {
+    try {
+      // Check cache first
+      const cached = this.urlCache.get(s3Key);
+      if (cached && Date.now() < cached.expiresAt) {
+        return cached.url;
+      }
+
+      // Generate new signed URL (valid for 7 hours)
+      const command = new HeadObjectCommand({
+        Bucket: this.bucketName,
+        Key: s3Key
+      });
+
+      const url = await getSignedUrl(this.s3Client, command, { expiresIn: 25200 });
+
+      // Cache the URL
+      this.urlCache.set(s3Key, {
+        url: url,
+        expiresAt: Date.now() + this.cacheExpiry
+      });
+
+      return url;
+    } catch (error) {
+      console.error('Error getting image URL:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete an image from S3
+   */
+  async deleteImage(s3Key) {
+    try {
+      const command = new DeleteObjectCommand({
+        Bucket: this.bucketName,
+        Key: s3Key
+      });
+
+      await this.s3Client.send(command);
+
+      // Remove from cache
+      this.urlCache.delete(s3Key);
+
+      console.log(`🗑️ Deleted image: ${s3Key}`);
+    } catch (error) {
+      console.error('Error deleting from S3:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear expired URLs from cache (run periodically)
+   */
+  clearExpiredCache() {
+    const now = Date.now();
+    for (const [key, value] of this.urlCache.entries()) {
+      if (now >= value.expiresAt) {
+        this.urlCache.delete(key);
+      }
+    }
   }
 }
 
-export default new StorageService();
+export default new StorageManager();
