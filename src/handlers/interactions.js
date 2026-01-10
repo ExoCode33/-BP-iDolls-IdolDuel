@@ -1295,12 +1295,10 @@ async function handleVote(interaction) {
 }
 
 /**
- * DUEL CONTROL HANDLERS
+ * DUEL CONTROL HANDLERS - FIXED
  */
 
 async function handleStartDuel(interaction) {
-  await interaction.deferUpdate();
-
   try {
     const guildId = interaction.guild.id.toString();
     await duelManager.startDuel(guildId);
@@ -1312,13 +1310,11 @@ async function handleStartDuel(interaction) {
   } catch (error) {
     console.error('Error starting duel:', error);
     const embed = embedUtils.createErrorEmbed('Failed to start duel system.');
-    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
 
 async function handleStopDuel(interaction) {
-  await interaction.deferUpdate();
-
   try {
     const guildId = interaction.guild.id.toString();
     await duelManager.stopDuel(guildId);
@@ -1330,13 +1326,11 @@ async function handleStopDuel(interaction) {
   } catch (error) {
     console.error('Error stopping duel:', error);
     const embed = embedUtils.createErrorEmbed('Failed to stop.');
-    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
 
 async function handleSkipDuel(interaction) {
-  await interaction.deferUpdate();
-
   try {
     const guildId = interaction.guild.id.toString();
     await duelManager.skipDuel(guildId);
@@ -1348,13 +1342,11 @@ async function handleSkipDuel(interaction) {
   } catch (error) {
     console.error('Error skipping duel:', error);
     const embed = embedUtils.createErrorEmbed('Failed to skip.');
-    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
 
 async function handlePauseDuel(interaction) {
-  await interaction.deferUpdate();
-
   try {
     const guildId = interaction.guild.id.toString();
 
@@ -1370,13 +1362,11 @@ async function handlePauseDuel(interaction) {
   } catch (error) {
     console.error('Error pausing:', error);
     const embed = embedUtils.createErrorEmbed('Failed to pause.');
-    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
 
 async function handleResumeDuel(interaction) {
-  await interaction.deferUpdate();
-
   try {
     const guildId = interaction.guild.id.toString();
 
@@ -1394,7 +1384,7 @@ async function handleResumeDuel(interaction) {
   } catch (error) {
     console.error('Error resuming:', error);
     const embed = embedUtils.createErrorEmbed('Failed to resume.');
-    await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
 
