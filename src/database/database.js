@@ -1,12 +1,22 @@
 /**
  * Database Connection and Schema
  * PostgreSQL with retirement settings support
+ * FIXED: BigInt serialization for Discord IDs
  */
 
 import pg from 'pg';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+// ============================================
+// CRITICAL FIX: Handle BigInt serialization
+// Discord.js v14 uses BigInt for snowflake IDs
+// PostgreSQL driver cannot serialize BigInt
+// ============================================
+BigInt.prototype.toJSON = function() {
+  return this.toString();
+};
 
 const { Pool } = pg;
 
@@ -20,7 +30,20 @@ class Database {
 
   async query(text, params) {
     const start = Date.now();
-    const res = await this.pool.query(text, params);
+    
+    // Convert any BigInt parameters to strings
+    const convertedParams = params?.map(param => {
+      if (typeof param === 'bigint') {
+        return param.toString();
+      }
+      // Handle arrays that might contain BigInts
+      if (Array.isArray(param)) {
+        return param.map(item => typeof item === 'bigint' ? item.toString() : item);
+      }
+      return param;
+    });
+    
+    const res = await this.pool.query(text, convertedParams);
     const duration = Date.now() - start;
     
     if (duration > 100) {
