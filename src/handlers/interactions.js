@@ -2,6 +2,7 @@
  * Complete Interaction Handler
  * Enhanced image browser with filters (ELO/User) and fixed pagination
  * FIXED: BigInt handling throughout + Admin panel updates
+ * Auto-refresh enabled - no manual refresh button needed
  */
 
 import database from '../database/database.js';
@@ -47,13 +48,6 @@ async function autoDeleteEphemeral(interaction, delay = 3000) {
  */
 async function handleButton(interaction) {
   const customId = interaction.customId;
-
-  // Admin refresh panel
-  if (customId === 'admin_refresh_panel') {
-    const adminCommand = (await import('../commands/admin/admin.js')).default;
-    await adminCommand.showAdminPanel(interaction, true);
-    return;
-  }
 
   // Vote buttons
   if (customId.startsWith('vote_')) {
