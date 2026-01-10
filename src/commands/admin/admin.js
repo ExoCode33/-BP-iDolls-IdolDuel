@@ -1,6 +1,6 @@
 /**
  * Enhanced Admin Command
- * FIXED: Proper interaction handling for buttons vs modals
+ * FIXED: Clear status indicators for System vs Duel state
  */
 
 import { 
@@ -99,23 +99,27 @@ export default {
       retirementInfo = `• Auto-Retire: Below ${config.retire_below_elo} ELO`;
     }
 
-    // Status emoji
-    let statusText = '❌ Stopped';
+    // FIXED: Clear status indicators
+    let systemStatus = '❌ Stopped';
+    let duelStatus = '❌ None';
+
     if (config.duel_active) {
       if (config.duel_paused) {
-        statusText = '⏸️ Paused';
+        systemStatus = '⏸️ Paused';
+        duelStatus = hasActiveDuel ? '⏸️ Paused' : '❌ None';
       } else {
-        statusText = '✅ Active';
+        systemStatus = '✅ Running';
+        duelStatus = hasActiveDuel ? '✅ Active' : '⏳ Starting...';
       }
     }
 
     embed.setDescription(
-      `**Status:** ${statusText}\n` +
+      `**System Status:** ${systemStatus}\n` +
+      `**Current Duel:** ${duelStatus}\n` +
       `**Schedule:** Every ${scheduleMinutes} min for ${durationMinutes} min\n\n` +
       `**📊 Statistics:**\n` +
       `• Images: ${imageStats.active} active, ${imageStats.retired} retired\n` +
-      `• Total Duels: ${duelStats.rows[0].total}\n` +
-      `• Current Duel: ${hasActiveDuel ? '✅ Running' : '❌ None'}\n\n` +
+      `• Total Duels: ${duelStats.rows[0].total}\n\n` +
       `**⚙️ Settings:**\n` +
       `• Starting ELO: ${config.starting_elo}\n` +
       `• K-Factor: ${config.k_factor}\n` +
@@ -196,17 +200,14 @@ export default {
 
     const components = [controlRow, settingsRow, managementRow];
 
-    // FIXED: Proper handling for different interaction types
+    // Proper handling for different interaction types
     if (isUpdate) {
       if (interaction.isModalSubmit()) {
-        // Modals: use editReply after deferUpdate
         await interaction.editReply({ embeds: [embed], components: components });
       } else if (interaction.isButton()) {
-        // Buttons: use update (NOT editReply)
         await interaction.update({ embeds: [embed], components: components });
       }
     } else {
-      // Initial command: use editReply after deferReply
       await interaction.editReply({ embeds: [embed], components: components });
     }
   }
