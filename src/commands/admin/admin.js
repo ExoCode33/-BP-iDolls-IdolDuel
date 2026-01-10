@@ -33,7 +33,6 @@ export default {
   async showAdminPanel(interaction, isUpdate = false) {
     const guildId = interaction.guild.id.toString();
 
-    // Get config
     const configResult = await database.query(
       'SELECT * FROM guild_config WHERE guild_id = $1',
       [guildId]
@@ -58,7 +57,6 @@ export default {
 
     const config = configResult.rows[0];
 
-    // Get stats
     const stats = await database.query(
       `SELECT 
         COUNT(*) FILTER (WHERE retired = false) as active,
@@ -70,13 +68,11 @@ export default {
 
     const imageStats = stats.rows[0];
 
-    // Get duel stats
     const duelStats = await database.query(
       'SELECT COUNT(*) as total FROM duels WHERE guild_id = $1',
       [guildId]
     );
 
-    // Check for active duel
     const activeDuel = await database.query(
       'SELECT * FROM active_duels WHERE guild_id = $1',
       [guildId]
@@ -84,14 +80,12 @@ export default {
 
     const hasActiveDuel = activeDuel.rows.length > 0;
 
-    // Create embed
     const embed = embedUtils.createBaseEmbed();
     embed.setTitle('⚙️ IdolDuel Admin Panel');
     
     const scheduleMinutes = Math.floor(config.duel_interval / 60);
     const durationMinutes = Math.floor(config.duel_duration / 60);
 
-    // Retirement info
     let retirementInfo = '• Auto-Retirement: Disabled';
     if (config.retire_after_losses && config.retire_after_losses > 0) {
       retirementInfo = `• Auto-Retire: ${config.retire_after_losses} losses`;
@@ -99,7 +93,6 @@ export default {
       retirementInfo = `• Auto-Retire: Below ${config.retire_below_elo} ELO`;
     }
 
-    // FIXED: Clear status indicators
     let systemStatus = '❌ Stopped';
     let duelStatus = '❌ None';
 
@@ -126,11 +119,9 @@ export default {
       `${retirementInfo}`
     );
 
-    // Control buttons (Row 1)
     const controlRow = new ActionRowBuilder();
 
     if (!config.duel_active) {
-      // System is stopped - show Start button
       controlRow.addComponents(
         new ButtonBuilder()
           .setCustomId('admin_start_duel')
@@ -138,7 +129,6 @@ export default {
           .setStyle(ButtonStyle.Success)
       );
     } else if (config.duel_paused) {
-      // System is paused - show Resume and Stop
       controlRow.addComponents(
         new ButtonBuilder()
           .setCustomId('admin_resume_duel')
@@ -150,7 +140,6 @@ export default {
           .setStyle(ButtonStyle.Danger)
       );
     } else {
-      // System is active - show Pause, Skip, Stop
       controlRow.addComponents(
         new ButtonBuilder()
           .setCustomId('admin_pause_duel')
@@ -168,7 +157,6 @@ export default {
       );
     }
 
-    // Settings buttons (Row 2)
     const settingsRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -185,7 +173,6 @@ export default {
           .setStyle(ButtonStyle.Primary)
       );
 
-    // Management buttons (Row 3)
     const managementRow = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
@@ -200,7 +187,6 @@ export default {
 
     const components = [controlRow, settingsRow, managementRow];
 
-    // Proper handling for different interaction types
     if (isUpdate) {
       if (interaction.isModalSubmit()) {
         await interaction.editReply({ embeds: [embed], components: components });
