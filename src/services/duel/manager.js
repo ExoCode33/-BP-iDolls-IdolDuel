@@ -1,7 +1,6 @@
 /**
- * Duel Manager - 2 EMBED VERSION
- * Handles array of 2 embeds properly
- * FIXED: BigInt handling throughout + Vote counter updates + Skip resolves duel
+ * Duel Manager - FLAWLESS VERSION
+ * Proper state management for all control actions
  */
 
 import database from '../../database/database.js';
@@ -60,7 +59,7 @@ class DuelManager {
       if (endsAt <= now) {
         console.log(`⏰ Duel ${duelId} expired, ending now...`);
         await this.endDuel(guildId);
-        await this.checkGuild(guildId);
+        await this.scheduleNextDuel(guildId);
         return;
       }
 
@@ -312,9 +311,10 @@ class DuelManager {
         this.voteUpdateIntervals.delete(guildIdStr);
       }
 
-      // FIXED: Call resolver with correct parameters
+      // Resolve duel with results
       await resolver.resolveDuel(guildIdStr, activeDuel.duelId, this.client);
 
+      // Clean up active duel
       await database.query('DELETE FROM active_duels WHERE guild_id = $1', [guildIdStr]);
       await redis.clearActiveDuel(guildIdStr);
 
@@ -322,6 +322,16 @@ class DuelManager {
         clearTimeout(this.activeTimers.get(guildIdStr));
         this.activeTimers.delete(guildIdStr);
       }
+
+      console.log(`✅ Duel ended for guild ${guildIdStr}`);
+    } catch (error) {
+      console.error('Error ending duel:', error);
+    }
+  }
+
+  async scheduleNextDuel(guildId) {
+    try {
+      const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
 
       const configResult = await database.query(
         'SELECT * FROM guild_config WHERE guild_id = $1',
@@ -332,15 +342,20 @@ class DuelManager {
 
       const config = configResult.rows[0];
 
+      if (!config.duel_active || config.duel_paused) {
+        console.log(`⏸️ Not scheduling next duel (system inactive/paused)`);
+        return;
+      }
+
       const nextDuelTimer = setTimeout(() => {
         this.checkGuild(guildIdStr);
       }, config.duel_interval * 1000);
 
       this.activeTimers.set(`${guildIdStr}_next`, nextDuelTimer);
 
-      console.log(`✅ Duel ended, next duel in ${config.duel_interval / 60} minutes`);
+      console.log(`⏱️ Next duel in ${config.duel_interval / 60} minutes`);
     } catch (error) {
-      console.error('Error ending duel:', error);
+      console.error('Error scheduling next duel:', error);
     }
   }
 
@@ -395,6 +410,13 @@ class DuelManager {
     }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // CONTROL ACTIONS - FLAWLESS LOGIC
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * START - Activates the system and starts a new duel immediately
+   */
   async startDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
     
@@ -403,17 +425,35 @@ class DuelManager {
       [guildIdStr]
     );
 
+    // Clear any pending "next duel" timers
+    if (this.activeTimers.has(`${guildIdStr}_next`)) {
+      clearTimeout(this.activeTimers.get(`${guildIdStr}_next`));
+      this.activeTimers.delete(`${guildIdStr}_next`);
+    }
+
     await this.checkGuild(guildIdStr);
+    console.log(`▶️ System started for guild ${guildIdStr}`);
   }
 
+  /**
+   * STOP - Ends current duel WITH RESULTS, deactivates system, no next duel
+   */
   async stopDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
     
+    // End current duel if exists (posts results)
+    const activeDuel = await this.getActiveDuel(guildIdStr);
+    if (activeDuel) {
+      await this.endDuel(guildIdStr);
+    }
+
+    // Deactivate system
     await database.query(
       'UPDATE guild_config SET duel_active = false, duel_paused = false WHERE guild_id = $1',
       [guildIdStr]
     );
 
+    // Clear all timers
     if (this.activeTimers.has(guildIdStr)) {
       clearTimeout(this.activeTimers.get(guildIdStr));
       this.activeTimers.delete(guildIdStr);
@@ -428,18 +468,84 @@ class DuelManager {
       clearInterval(this.voteUpdateIntervals.get(guildIdStr));
       this.voteUpdateIntervals.delete(guildIdStr);
     }
+
+    console.log(`⏹️ System stopped for guild ${guildIdStr}`);
   }
 
+  /**
+   * SKIP - Ends current duel WITH RESULTS, starts next duel after 3s
+   */
   async skipDuel(guildId) {
     const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
     
-    // FIXED: End the current duel with results (resolves based on votes)
+    // End current duel (posts results)
     await this.endDuel(guildIdStr);
     
-    // Wait a bit before starting the next duel (so users can see results)
+    // Start next duel after brief delay
     setTimeout(() => {
       this.checkGuild(guildIdStr);
-    }, 3000); // 3 seconds delay
+    }, 3000);
+
+    console.log(`⏭️ Duel skipped for guild ${guildIdStr}`);
+  }
+
+  /**
+   * PAUSE - Stops duel timer, keeps duel active, can resume
+   */
+  async pauseDuel(guildId) {
+    const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+
+    await database.query(
+      'UPDATE guild_config SET duel_paused = true WHERE guild_id = $1',
+      [guildIdStr]
+    );
+
+    // Clear the duel end timer (duel stays active but won't end)
+    if (this.activeTimers.has(guildIdStr)) {
+      clearTimeout(this.activeTimers.get(guildIdStr));
+      this.activeTimers.delete(guildIdStr);
+    }
+
+    // Keep vote updates running
+    console.log(`⏸️ Duel paused for guild ${guildIdStr}`);
+  }
+
+  /**
+   * RESUME - Resumes paused duel or starts new one if none active
+   */
+  async resumeDuel(guildId) {
+    const guildIdStr = typeof guildId === 'bigint' ? guildId.toString() : String(guildId);
+
+    await database.query(
+      'UPDATE guild_config SET duel_paused = false WHERE guild_id = $1',
+      [guildIdStr]
+    );
+
+    const activeDuel = await this.getActiveDuel(guildIdStr);
+
+    if (activeDuel) {
+      // Resume existing duel - restart timer
+      const now = new Date();
+      const endsAt = new Date(activeDuel.endsAt);
+      const remainingTime = endsAt - now;
+
+      if (remainingTime > 0) {
+        const timer = setTimeout(() => {
+          this.endDuel(guildIdStr);
+        }, remainingTime);
+
+        this.activeTimers.set(guildIdStr, timer);
+        console.log(`▶️ Duel resumed with ${Math.round(remainingTime / 1000)}s remaining`);
+      } else {
+        // Duel expired during pause, end it
+        await this.endDuel(guildIdStr);
+        await this.scheduleNextDuel(guildIdStr);
+      }
+    } else {
+      // No active duel, start a new one
+      await this.checkGuild(guildIdStr);
+      console.log(`▶️ System resumed, starting new duel`);
+    }
   }
 }
 
