@@ -1,10 +1,9 @@
 /**
  * S3 Storage Manager
- * Handles image upload/download/delete with URL caching
- * FIXED: Uses correct Railway environment variable names (S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY)
+ * DIAGNOSTIC VERSION - Shows exactly what's wrong
  */
 
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import crypto from 'crypto';
 
@@ -13,77 +12,66 @@ class StorageManager {
     this.s3Client = null;
     this.bucketName = process.env.S3_BUCKET_NAME;
     this.urlCache = new Map();
-    this.cacheExpiry = 6 * 60 * 60 * 1000; // 6 hours in milliseconds
+    this.cacheExpiry = 6 * 60 * 60 * 1000;
   }
 
-  /**
-   * Initialize S3 connection with credential validation
-   * FIXED: Uses Railway's S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY
-   */
   async initialize() {
     try {
-      // FIXED: Use correct environment variable names from Railway
+      console.log('\n🔍 DIAGNOSING S3 CONFIGURATION:');
+      console.log('================================');
+      
+      // Check all possible credential combinations
       const accessKey = process.env.S3_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY;
       const secretKey = process.env.S3_SECRET_ACCESS_KEY || process.env.S3_SECRET_KEY;
+      
+      console.log('S3_ACCESS_KEY_ID:', process.env.S3_ACCESS_KEY_ID ? 'SET ✅' : 'MISSING ❌');
+      console.log('S3_SECRET_ACCESS_KEY:', process.env.S3_SECRET_ACCESS_KEY ? 'SET ✅' : 'MISSING ❌');
+      console.log('S3_ACCESS_KEY:', process.env.S3_ACCESS_KEY ? 'SET ✅' : 'MISSING ❌');
+      console.log('S3_SECRET_KEY:', process.env.S3_SECRET_KEY ? 'SET ✅' : 'MISSING ❌');
+      console.log('S3_ENDPOINT:', process.env.S3_ENDPOINT || 'MISSING ❌');
+      console.log('S3_BUCKET_NAME:', process.env.S3_BUCKET_NAME || 'MISSING ❌');
+      console.log('S3_REGION:', process.env.S3_REGION || 'MISSING ❌');
+      console.log('');
+      console.log('Using Access Key:', accessKey ? `${accessKey.substring(0, 8)}****` : 'NONE ❌');
+      console.log('Using Secret Key:', secretKey ? `${secretKey.substring(0, 8)}****` : 'NONE ❌');
+      console.log('================================\n');
 
-      // Validate credentials first
       if (!accessKey || !secretKey) {
-        throw new Error('S3 credentials are missing! Check S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY in environment');
-      }
-
-      if (accessKey.length < 10) {
-        throw new Error('S3_ACCESS_KEY_ID looks invalid (too short)');
-      }
-
-      if (secretKey.length < 10) {
-        throw new Error('S3_SECRET_ACCESS_KEY looks invalid (too short)');
+        throw new Error('❌ S3 credentials missing! Set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY');
       }
 
       if (!process.env.S3_ENDPOINT) {
-        throw new Error('S3_ENDPOINT is missing');
+        throw new Error('❌ S3_ENDPOINT missing');
       }
 
       if (!process.env.S3_BUCKET_NAME) {
-        throw new Error('S3_BUCKET_NAME is missing');
-      }
-
-      if (!process.env.S3_REGION) {
-        throw new Error('S3_REGION is missing');
+        throw new Error('❌ S3_BUCKET_NAME missing');
       }
 
       this.s3Client = new S3Client({
-        region: process.env.S3_REGION,
+        region: process.env.S3_REGION || 'us-east-1',
         endpoint: process.env.S3_ENDPOINT,
         credentials: {
           accessKeyId: accessKey,
           secretAccessKey: secretKey
         },
-        forcePathStyle: true // Required for Railway S3
+        forcePathStyle: true
       });
 
-      // Test connection
-      console.log('🔍 Testing S3 connection...');
-      console.log('   Endpoint:', process.env.S3_ENDPOINT);
-      console.log('   Bucket:', process.env.S3_BUCKET_NAME);
-      console.log('   Region:', process.env.S3_REGION);
-      console.log('   Access Key:', accessKey ? `${accessKey.substring(0, 4)}****` : 'MISSING');
-      console.log('   Secret Key:', secretKey ? `${secretKey.substring(0, 4)}****` : 'MISSING');
-
-      console.log('✅ S3 client initialized');
+      console.log('✅ S3 Client Created Successfully\n');
       
     } catch (error) {
-      console.error('❌ Failed to initialize S3:', error.message);
+      console.error('❌ S3 INITIALIZATION FAILED:', error.message);
       throw error;
     }
   }
 
-  /**
-   * Upload an image to S3
-   */
   async uploadImage(guildId, imageBuffer) {
     try {
       const fileHash = crypto.createHash('md5').update(imageBuffer).digest('hex');
       const s3Key = `${guildId}/${fileHash}.jpg`;
+
+      console.log(`📤 Uploading: ${s3Key}`);
 
       const command = new PutObjectCommand({
         Bucket: this.bucketName,
@@ -93,17 +81,15 @@ class StorageManager {
       });
 
       await this.s3Client.send(command);
+      console.log(`✅ Upload successful: ${s3Key}`);
 
       return s3Key;
     } catch (error) {
-      console.error('Error uploading to S3:', error);
+      console.error('❌ Upload failed:', error.message);
       throw error;
     }
   }
 
-  /**
-   * Get a signed URL for an image (with caching)
-   */
   async getImageUrl(s3Key) {
     try {
       // Check cache first
@@ -112,8 +98,10 @@ class StorageManager {
         return cached.url;
       }
 
-      // Generate new signed URL (valid for 7 hours)
-      const command = new HeadObjectCommand({
+      console.log(`🔗 Generating signed URL for: ${s3Key}`);
+
+      // Use GetObject instead of HeadObject for signed URLs
+      const command = new GetObjectCommand({
         Bucket: this.bucketName,
         Key: s3Key
       });
@@ -126,16 +114,16 @@ class StorageManager {
         expiresAt: Date.now() + this.cacheExpiry
       });
 
+      console.log(`✅ Signed URL generated`);
       return url;
     } catch (error) {
-      console.error('Error getting image URL:', error);
+      console.error('❌ Failed to generate signed URL:', error.message);
+      console.error('   Key:', s3Key);
+      console.error('   Bucket:', this.bucketName);
       throw error;
     }
   }
 
-  /**
-   * Delete an image from S3
-   */
   async deleteImage(s3Key) {
     try {
       const command = new DeleteObjectCommand({
@@ -144,20 +132,15 @@ class StorageManager {
       });
 
       await this.s3Client.send(command);
-
-      // Remove from cache
       this.urlCache.delete(s3Key);
 
-      console.log(`🗑️ Deleted image: ${s3Key}`);
+      console.log(`🗑️ Deleted: ${s3Key}`);
     } catch (error) {
-      console.error('Error deleting from S3:', error);
+      console.error('❌ Delete failed:', error.message);
       throw error;
     }
   }
 
-  /**
-   * Clear expired URLs from cache (run periodically)
-   */
   clearExpiredCache() {
     const now = Date.now();
     for (const [key, value] of this.urlCache.entries()) {
