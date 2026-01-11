@@ -1,6 +1,6 @@
 /**
  * Enhanced Admin Command
- * FIXED: Shows "Duel Cycle" instead of separate schedule
+ * FIXED: Shows single "Duel Cycle" instead of interval + duration
  */
 
 import { 
@@ -83,8 +83,7 @@ export default {
     const embed = embedUtils.createBaseEmbed();
     embed.setTitle('⚙️ IdolDuel Admin Panel');
     
-    const intervalMinutes = Math.floor(config.duel_interval / 60);
-    const durationMinutes = Math.floor(config.duel_duration / 60);
+    const cycleMinutes = Math.floor(config.duel_duration / 60);
 
     let retirementInfo = '• Auto-Retirement: Disabled';
     if (config.retire_after_losses && config.retire_after_losses > 0) {
@@ -109,7 +108,7 @@ export default {
     embed.setDescription(
       `**System Status:** ${systemStatus}\n` +
       `**Current Duel:** ${duelStatus}\n` +
-      `**Duel Cycle:** ${intervalMinutes} min interval • ${durationMinutes} min duration\n\n` +
+      `**Duel Cycle:** ${cycleMinutes} minutes\n\n` +
       `**📊 Statistics:**\n` +
       `• Images: ${imageStats.active} active, ${imageStats.retired} retired\n` +
       `• Total Duels: ${duelStats.rows[0].total}\n\n` +
@@ -161,7 +160,7 @@ export default {
       .addComponents(
         new ButtonBuilder()
           .setCustomId('admin_edit_schedule')
-          .setLabel('⏱️ Schedule')
+          .setLabel('⏱️ Duel Cycle')
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId('admin_edit_elo')
