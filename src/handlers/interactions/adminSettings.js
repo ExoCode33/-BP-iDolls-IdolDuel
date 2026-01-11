@@ -1,6 +1,6 @@
 /**
  * Admin Settings Handlers
- * Schedule, ELO, Retirement, Import modals
+ * FIXED: Single "Cycle" field instead of interval + duration
  */
 
 import database from '../../database/database.js';
@@ -60,43 +60,41 @@ async function autoDeleteEphemeral(interaction, delay = 3000) {
 }
 
 // ════════════════════════════════════════════════════════════
-// SCHEDULE SETTINGS
+// SCHEDULE SETTINGS - SINGLE CYCLE FIELD
 // ════════════════════════════════════════════════════════════
 
 async function showScheduleModal(interaction) {
   const guildId = interaction.guild.id.toString();
   
   const config = await database.query(
-    'SELECT duel_interval, duel_duration FROM guild_config WHERE guild_id = $1',
+    'SELECT duel_duration FROM guild_config WHERE guild_id = $1',
     [guildId]
   );
 
-  const currentInterval = Math.floor(config.rows[0].duel_interval / 60);
-  const currentDuration = Math.floor(config.rows[0].duel_duration / 60);
+  const currentCycle = Math.floor(config.rows[0].duel_duration / 60);
 
   const modal = new ModalBuilder()
     .setCustomId('modal_edit_schedule')
-    .setTitle('Edit Duel Schedule');
+    .setTitle('Edit Duel Cycle');
 
-  const intervalInput = new TextInputBuilder()
-    .setCustomId('duel_interval')
-    .setLabel('Duel Interval (minutes)')
+  const cycleInput = new TextInputBuilder()
+    .setCustomId('duel_cycle')
+    .setLabel('Duel Cycle (minutes)')
     .setStyle(TextInputStyle.Short)
     .setPlaceholder('e.g., 2, 30, 60, 360')
-    .setValue(currentInterval.toString())
+    .setValue(currentCycle.toString())
     .setRequired(true);
 
-  const durationInput = new TextInputBuilder()
-    .setCustomId('duel_duration')
-    .setLabel('Duel Duration (minutes)')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('e.g., 2, 30, 60, 360')
-    .setValue(currentDuration.toString())
-    .setRequired(true);
+  const helpText = new TextInputBuilder()
+    .setCustomId('help_text')
+    .setLabel('How it works:')
+    .setStyle(TextInputStyle.Paragraph)
+    .setValue('One duel runs for this duration.\nAfter time expires, duel ends and next one starts.\nExample: 2 min = new duel every 2 minutes')
+    .setRequired(false);
 
   modal.addComponents(
-    new ActionRowBuilder().addComponents(intervalInput),
-    new ActionRowBuilder().addComponents(durationInput)
+    new ActionRowBuilder().addComponents(cycleInput),
+    new ActionRowBuilder().addComponents(helpText)
   );
 
   await interaction.showModal(modal);
@@ -107,36 +105,29 @@ async function handleScheduleSubmit(interaction) {
 
   try {
     const guildId = interaction.guild.id.toString();
-    const intervalMinutes = parseInt(interaction.fields.getTextInputValue('duel_interval'));
-    const durationMinutes = parseInt(interaction.fields.getTextInputValue('duel_duration'));
+    const cycleMinutes = parseInt(interaction.fields.getTextInputValue('duel_cycle'));
 
-    if (isNaN(intervalMinutes) || intervalMinutes < 1) {
-      const embed = embedUtils.createErrorEmbed('Invalid interval!');
+    if (isNaN(cycleMinutes) || cycleMinutes < 1) {
+      const embed = embedUtils.createErrorEmbed('Invalid cycle duration! Must be at least 1 minute.');
       await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
       return;
     }
 
-    if (isNaN(durationMinutes) || durationMinutes < 1) {
-      const embed = embedUtils.createErrorEmbed('Invalid duration!');
-      await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
-      return;
-    }
+    const cycleSeconds = cycleMinutes * 60;
 
-    const intervalSeconds = intervalMinutes * 60;
-    const durationSeconds = durationMinutes * 60;
-
+    // Set BOTH interval and duration to the same value (cycle)
     await database.query(
       'UPDATE guild_config SET duel_interval = $1, duel_duration = $2 WHERE guild_id = $3',
-      [intervalSeconds, durationSeconds, guildId]
+      [cycleSeconds, cycleSeconds, guildId]
     );
 
     const adminCommand = (await import('../../commands/admin/admin.js')).default;
     await adminCommand.showAdminPanel(interaction, true);
     
-    console.log(`⏱️ Schedule updated for guild ${guildId}`);
+    console.log(`⏱️ Duel cycle updated to ${cycleMinutes} minutes for guild ${guildId}`);
   } catch (error) {
-    console.error('Error updating schedule:', error);
-    const embed = embedUtils.createErrorEmbed('Failed to update!');
+    console.error('Error updating cycle:', error);
+    const embed = embedUtils.createErrorEmbed('Failed to update cycle!');
     await interaction.followUp({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
@@ -388,7 +379,7 @@ async function handleImportSubmit(interaction) {
     }
 
     const successEmbed = embedUtils.createSuccessEmbed(
-      `✅ Import complete!\n\nImported: ${imported}\nSkipped: ${skipped}`
+      `✅ Import complete!\n\nImported: ${imported}\nSkipped: ${skipped} (wrong aspect ratio)`
     );
 
     await interaction.editReply({ embeds: [successEmbed] });
