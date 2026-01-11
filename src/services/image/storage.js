@@ -1,6 +1,7 @@
 /**
  * S3 Storage Manager
  * Handles image upload/download/delete with URL caching
+ * FIXED: Uses correct Railway environment variable names (S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY)
  */
 
 import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
@@ -16,17 +17,48 @@ class StorageManager {
   }
 
   /**
-   * Initialize S3 connection
+   * Initialize S3 connection with credential validation
+   * FIXED: Uses Railway's S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY
    */
   async initialize() {
     try {
+      // FIXED: Use correct environment variable names from Railway
+      const accessKey = process.env.S3_ACCESS_KEY_ID || process.env.S3_ACCESS_KEY;
+      const secretKey = process.env.S3_SECRET_ACCESS_KEY || process.env.S3_SECRET_KEY;
+
+      // Validate credentials first
+      if (!accessKey || !secretKey) {
+        throw new Error('S3 credentials are missing! Check S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY in environment');
+      }
+
+      if (accessKey.length < 10) {
+        throw new Error('S3_ACCESS_KEY_ID looks invalid (too short)');
+      }
+
+      if (secretKey.length < 10) {
+        throw new Error('S3_SECRET_ACCESS_KEY looks invalid (too short)');
+      }
+
+      if (!process.env.S3_ENDPOINT) {
+        throw new Error('S3_ENDPOINT is missing');
+      }
+
+      if (!process.env.S3_BUCKET_NAME) {
+        throw new Error('S3_BUCKET_NAME is missing');
+      }
+
+      if (!process.env.S3_REGION) {
+        throw new Error('S3_REGION is missing');
+      }
+
       this.s3Client = new S3Client({
         region: process.env.S3_REGION,
         endpoint: process.env.S3_ENDPOINT,
         credentials: {
-          accessKeyId: process.env.S3_ACCESS_KEY,
-          secretAccessKey: process.env.S3_SECRET_KEY
-        }
+          accessKeyId: accessKey,
+          secretAccessKey: secretKey
+        },
+        forcePathStyle: true // Required for Railway S3
       });
 
       // Test connection
@@ -34,12 +66,13 @@ class StorageManager {
       console.log('   Endpoint:', process.env.S3_ENDPOINT);
       console.log('   Bucket:', process.env.S3_BUCKET_NAME);
       console.log('   Region:', process.env.S3_REGION);
+      console.log('   Access Key:', accessKey ? `${accessKey.substring(0, 4)}****` : 'MISSING');
+      console.log('   Secret Key:', secretKey ? `${secretKey.substring(0, 4)}****` : 'MISSING');
 
-      // No need to test with a HEAD request - S3 client is lazy-loaded
       console.log('✅ S3 client initialized');
       
     } catch (error) {
-      console.error('Failed to initialize S3:', error);
+      console.error('❌ Failed to initialize S3:', error.message);
       throw error;
     }
   }
