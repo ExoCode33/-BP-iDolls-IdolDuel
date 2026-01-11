@@ -1,6 +1,6 @@
 /**
  * Enhanced Admin Command
- * FIXED: Clear status indicators for System vs Duel state
+ * FIXED: Clear status indicators for System vs Duel state + System Reset button
  */
 
 import { 
@@ -182,7 +182,11 @@ export default {
         new ButtonBuilder()
           .setCustomId('admin_browse_images')
           .setLabel('🖼️ Browse Images')
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('admin_system_reset')
+          .setLabel('🔥 System Reset')
+          .setStyle(ButtonStyle.Danger)
       );
 
     const components = [controlRow, settingsRow, managementRow];
