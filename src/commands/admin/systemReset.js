@@ -1,54 +1,44 @@
+/**
+ * System Reset Command
+ * Complete database wipe with password protection
+ */
+
+import database from '../../database/database.js';
+import storage from '../../services/image/storage.js';
+import embedUtils from '../../utils/embeds.js';
 import { 
+  ActionRowBuilder, 
+  ButtonBuilder, 
+  ButtonStyle,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   MessageFlags
 } from 'discord.js';
-import database from '../../database/database.js';
-import redis from '../../database/redis.js';
-import storage from '../../services/image/storage.js';
-import embedUtils from '../../utils/embeds.js';
-import { S3Client, ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 
-export default {
-  name: 'system-reset',
-  
+class SystemReset {
+  /**
+   * Show warning before reset
+   */
   async showResetWarning(interaction) {
     const embed = embedUtils.createBaseEmbed();
-    embed.setTitle('⚠️ System Reset Configuration');
-    embed.setColor(0xFF6B6B); // Warning red
+    embed.setColor('#FF0000');
+    embed.setTitle('⚠️ SYSTEM RESET WARNING');
     embed.setDescription(
-      `\`\`\`css\n` +
-      `[ Complete System Reset ]\n` +
-      `\`\`\`\n` +
-      `**This operation will permanently remove:**\n\n` +
-      `**PostgreSQL Database:**\n` +
-      `• All image records and metadata\n` +
-      `• All duel history and results\n` +
-      `• All votes\n` +
-      `• Guild configuration settings\n\n` +
-      `**S3 Storage Bucket:**\n` +
-      `• All uploaded image files\n` +
-      `• Complete bucket contents\n\n` +
-      `**Redis Cache:**\n` +
-      `• All cached data\n` +
-      `• Active session information\n\n` +
-      `**System Status:**\n` +
-      `• Bot will automatically restart after completion\n` +
-      `• Fresh database tables will be recreated\n` +
-      `• All settings will return to defaults\n\n` +
-      `⚠️ **Warning:** This action is irreversible. All data will be permanently deleted.\n\n` +
-      `Please confirm you understand the consequences before proceeding.`
+      '**This will permanently delete:**\n' +
+      '• All images from S3 storage\n' +
+      '• All ELO ratings and records\n' +
+      '• All duel history\n' +
+      '• All votes\n\n' +
+      '**This action CANNOT be undone!**\n\n' +
+      'Are you absolutely sure you want to continue?'
     );
 
-    const buttons = new ActionRowBuilder()
+    const row = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId('confirm_system_reset')
-          .setLabel('I Understand - Proceed with Reset')
+          .setLabel('Yes, Reset Everything')
           .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
           .setCustomId('cancel_system_reset')
@@ -58,28 +48,31 @@ export default {
 
     await interaction.reply({ 
       embeds: [embed], 
-      components: [buttons],
+      components: [row], 
       flags: MessageFlags.Ephemeral 
     });
-  },
+  }
 
+  /**
+   * Show password modal
+   */
   async showPasswordModal(interaction) {
     const modal = new ModalBuilder()
       .setCustomId('modal_system_reset')
-      .setTitle('System Reset Authentication');
+      .setTitle('Confirm System Reset');
 
     const passwordInput = new TextInputBuilder()
       .setCustomId('reset_password')
-      .setLabel('Enter system reset password')
+      .setLabel('Enter Reset Password')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Password required for system reset')
+      .setPlaceholder('Password from environment variables')
       .setRequired(true);
 
     const confirmInput = new TextInputBuilder()
       .setCustomId('reset_confirmation')
-      .setLabel('Type "RESET ALL DATA" to confirm')
+      .setLabel('Type "DELETE EVERYTHING" to confirm')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('RESET ALL DATA')
+      .setPlaceholder('DELETE EVERYTHING')
       .setRequired(true);
 
     modal.addComponents(
@@ -88,213 +81,83 @@ export default {
     );
 
     await interaction.showModal(modal);
-  },
-
-  async executeReset(interaction, password, confirmation) {
-    // Verify password
-    if (password !== process.env.SEASON_RESET_PASSWORD) {
-      const errorEmbed = embedUtils.createErrorEmbed('Invalid password. System reset cancelled.');
-      await interaction.editReply({ embeds: [errorEmbed], components: [] });
-      return;
-    }
-
-    // Verify confirmation text
-    if (confirmation !== 'RESET ALL DATA') {
-      const errorEmbed = embedUtils.createErrorEmbed('Confirmation text incorrect. System reset cancelled.');
-      await interaction.editReply({ embeds: [errorEmbed], components: [] });
-      return;
-    }
-
-    // Start reset process
-    const progressEmbed = embedUtils.createBaseEmbed();
-    progressEmbed.setTitle('🔄 System Reset in Progress');
-    progressEmbed.setDescription(
-      `\`\`\`css\n` +
-      `[ Processing System Reset ]\n` +
-      `\`\`\`\n` +
-      `⏳ Clearing database...\n` +
-      `⏳ Clearing S3 storage...\n` +
-      `⏳ Clearing Redis cache...\n` +
-      `⏳ Preparing restart...\n\n` +
-      `Please wait. This may take several minutes.`
-    );
-
-    await interaction.editReply({ embeds: [progressEmbed], components: [] });
-
-    try {
-      let status = {
-        database: '⏳ In progress',
-        s3: '⏳ In progress',
-        redis: '⏳ In progress',
-        restart: '⏳ Pending'
-      };
-
-      // 1. Clear PostgreSQL Database
-      try {
-        await this.clearDatabase();
-        status.database = '✅ Complete';
-      } catch (error) {
-        status.database = `❌ Error: ${error.message}`;
-        throw error;
-      }
-
-      await this.updateProgress(interaction, progressEmbed, status);
-
-      // 2. Clear S3 Bucket
-      try {
-        const deletedCount = await this.clearS3Bucket();
-        status.s3 = `✅ Complete (${deletedCount} files deleted)`;
-      } catch (error) {
-        status.s3 = `❌ Error: ${error.message}`;
-        throw error;
-      }
-
-      await this.updateProgress(interaction, progressEmbed, status);
-
-      // 3. Clear Redis
-      try {
-        await this.clearRedis();
-        status.redis = '✅ Complete';
-      } catch (error) {
-        status.redis = `⚠️ Warning: ${error.message}`;
-        // Redis error is not fatal, continue
-      }
-
-      await this.updateProgress(interaction, progressEmbed, status);
-
-      // 4. Reinitialize database
-      await database.initialize();
-      status.restart = '✅ Database reinitialized';
-
-      await this.updateProgress(interaction, progressEmbed, status);
-
-      // Success message
-      const successEmbed = embedUtils.createSuccessEmbed(
-        'System reset completed successfully!\n\n' +
-        '✅ Database cleared and reinitialized\n' +
-        '✅ S3 storage cleared\n' +
-        '✅ Redis cache cleared\n' +
-        '🔄 Bot is ready for fresh setup\n\n' +
-        'You can now import new images and configure settings.'
-      );
-
-      await interaction.editReply({ embeds: [successEmbed] });
-
-      console.log(`🔄 System reset completed by ${interaction.user.tag}`);
-
-    } catch (error) {
-      console.error('❌ System reset error:', error);
-      
-      const errorEmbed = embedUtils.createErrorEmbed(
-        `System reset failed: ${error.message}\n\n` +
-        `Some data may have been deleted. Check logs for details.\n` +
-        `Database may need manual recovery.`
-      );
-
-      await interaction.editReply({ embeds: [errorEmbed] });
-    }
-  },
-
-  async updateProgress(interaction, progressEmbed, status) {
-    progressEmbed.setDescription(
-      `\`\`\`css\n` +
-      `[ Processing System Reset ]\n` +
-      `\`\`\`\n` +
-      `**Database:** ${status.database}\n` +
-      `**S3 Storage:** ${status.s3}\n` +
-      `**Redis Cache:** ${status.redis}\n` +
-      `**System Status:** ${status.restart}\n`
-    );
-
-    try {
-      await interaction.editReply({ embeds: [progressEmbed] });
-    } catch (error) {
-      // Ignore edit errors during progress updates
-    }
-  },
-
-  async clearDatabase() {
-    console.log('🗑️  Clearing database...');
-    
-    // Drop all tables in correct order (respecting foreign keys)
-    const tables = [
-      'votes',
-      'active_duels',
-      'duels',
-      'images',
-      'guild_config'
-    ];
-
-    for (const table of tables) {
-      await database.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
-    }
-
-    console.log('✅ Database cleared');
-  },
-
-  async clearS3Bucket() {
-    console.log('🗑️  Clearing S3 bucket...');
-    
-    const s3Client = new S3Client({
-      endpoint: process.env.S3_ENDPOINT,
-      region: process.env.S3_REGION || 'us-east-1',
-      credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY_ID,
-        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
-      },
-      forcePathStyle: true,
-    });
-
-    const bucketName = process.env.S3_BUCKET_NAME;
-    let totalDeleted = 0;
-    let continuationToken = null;
-
-    do {
-      // List objects
-      const listCommand = new ListObjectsV2Command({
-        Bucket: bucketName,
-        ContinuationToken: continuationToken,
-      });
-
-      const listResult = await s3Client.send(listCommand);
-
-      if (!listResult.Contents || listResult.Contents.length === 0) {
-        break;
-      }
-
-      // Delete objects in batches of 1000 (S3 limit)
-      const objects = listResult.Contents.map(obj => ({ Key: obj.Key }));
-      
-      const deleteCommand = new DeleteObjectsCommand({
-        Bucket: bucketName,
-        Delete: {
-          Objects: objects,
-        },
-      });
-
-      await s3Client.send(deleteCommand);
-      totalDeleted += objects.length;
-
-      console.log(`   Deleted ${totalDeleted} files...`);
-
-      continuationToken = listResult.NextContinuationToken;
-    } while (continuationToken);
-
-    console.log(`✅ S3 bucket cleared (${totalDeleted} files deleted)`);
-    return totalDeleted;
-  },
-
-  async clearRedis() {
-    console.log('🗑️  Clearing Redis cache...');
-    
-    if (!redis.isConnected) {
-      console.log('⚠️  Redis not connected, skipping');
-      return;
-    }
-
-    // Flush all Redis data
-    await redis.client.flushAll();
-    
-    console.log('✅ Redis cache cleared');
   }
-};
+
+  /**
+   * Execute the reset
+   */
+  async executeReset(interaction, password, confirmation) {
+    try {
+      const correctPassword = process.env.SYSTEM_RESET_PASSWORD || 'admin123';
+
+      // Validate password
+      if (password !== correctPassword) {
+        const embed = embedUtils.createErrorEmbed('❌ Incorrect password!');
+        await interaction.editReply({ embeds: [embed], components: [] });
+        return;
+      }
+
+      // Validate confirmation text
+      if (confirmation !== 'DELETE EVERYTHING') {
+        const embed = embedUtils.createErrorEmbed('❌ Confirmation text does not match!');
+        await interaction.editReply({ embeds: [embed], components: [] });
+        return;
+      }
+
+      const guildId = interaction.guild.id.toString();
+
+      // Progress embed
+      const progressEmbed = embedUtils.createBaseEmbed();
+      progressEmbed.setTitle('🔄 System Reset in Progress...');
+      progressEmbed.setDescription('Please wait, this may take a while...');
+      await interaction.editReply({ embeds: [progressEmbed], components: [] });
+
+      // Step 1: Get all images to delete from S3
+      const imagesResult = await database.query(
+        'SELECT s3_key FROM images WHERE guild_id = $1',
+        [guildId]
+      );
+
+      let deletedImages = 0;
+      for (const row of imagesResult.rows) {
+        try {
+          await storage.deleteImage(row.s3_key);
+          deletedImages++;
+        } catch (error) {
+          console.error(`Failed to delete image ${row.s3_key}:`, error);
+        }
+      }
+
+      // Step 2: Delete all database records for this guild
+      await database.query('DELETE FROM votes WHERE duel_id IN (SELECT id FROM duels WHERE guild_id = $1)', [guildId]);
+      await database.query('DELETE FROM active_duels WHERE guild_id = $1', [guildId]);
+      await database.query('DELETE FROM duels WHERE guild_id = $1', [guildId]);
+      await database.query('DELETE FROM images WHERE guild_id = $1', [guildId]);
+
+      // Step 3: Reset guild config but keep settings
+      await database.query(
+        'UPDATE guild_config SET duel_active = false, duel_paused = false WHERE guild_id = $1',
+        [guildId]
+      );
+
+      // Success
+      const successEmbed = embedUtils.createSuccessEmbed(
+        `✅ **System Reset Complete!**\n\n` +
+        `Deleted ${deletedImages} images from S3\n` +
+        `Cleared all duels, votes, and records\n\n` +
+        `You can now run \`/setup\` to start fresh!`
+      );
+
+      await interaction.editReply({ embeds: [successEmbed], components: [] });
+
+      console.log(`🔥 System reset completed for guild ${guildId} by ${interaction.user.tag}`);
+
+    } catch (error) {
+      console.error('Error during system reset:', error);
+      const embed = embedUtils.createErrorEmbed('Failed to complete system reset!');
+      await interaction.editReply({ embeds: [embed], components: [] });
+    }
+  }
+}
+
+export default new SystemReset();
