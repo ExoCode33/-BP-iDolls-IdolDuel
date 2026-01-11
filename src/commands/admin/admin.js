@@ -1,6 +1,6 @@
 /**
  * Enhanced Admin Command
- * FIXED: Clear status indicators for System vs Duel state + System Reset button
+ * FIXED: Shows "Duel Cycle" instead of separate schedule
  */
 
 import { 
@@ -83,7 +83,7 @@ export default {
     const embed = embedUtils.createBaseEmbed();
     embed.setTitle('⚙️ IdolDuel Admin Panel');
     
-    const scheduleMinutes = Math.floor(config.duel_interval / 60);
+    const intervalMinutes = Math.floor(config.duel_interval / 60);
     const durationMinutes = Math.floor(config.duel_duration / 60);
 
     let retirementInfo = '• Auto-Retirement: Disabled';
@@ -109,7 +109,7 @@ export default {
     embed.setDescription(
       `**System Status:** ${systemStatus}\n` +
       `**Current Duel:** ${duelStatus}\n` +
-      `**Schedule:** Every ${scheduleMinutes} min for ${durationMinutes} min\n\n` +
+      `**Duel Cycle:** ${intervalMinutes} min interval • ${durationMinutes} min duration\n\n` +
       `**📊 Statistics:**\n` +
       `• Images: ${imageStats.active} active, ${imageStats.retired} retired\n` +
       `• Total Duels: ${duelStats.rows[0].total}\n\n` +
